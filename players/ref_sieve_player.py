@@ -20,19 +20,21 @@ class ReferentialSievePlayer(AIPlayer):
         my_hand = newest_to_oldest(r.h[r.whoseTurn].cards)
         identified_plays = deduce_plays(my_hand, r.progress, r.suits)
         play = self.get_instructed_play(r)
-        was_tempo_clue = self.was_tempo_clue(r, identified_plays)
-        if play and not was_tempo_clue:
+        was_tempo = self.was_tempo(r, identified_plays)
+        if play and not was_tempo:
             self.my_instructed_plays.append(play)
         if self.my_instructed_plays:
             return 'play', self.my_instructed_plays.pop(0)
         if identified_plays:
             return 'play', identified_plays[0]
-        tempo = find_tempo(r)
-        if tempo and r.hints > 0:
-            return 'hint', tempo
-        hint = self.find_hint(r)
-        if hint and r.hints > 0:
-            return 'hint', hint
+        if r.hints > 0:
+            hint = self.find_hint(r)
+            if hint:
+                return 'hint', hint
+            tempo = find_tempo(r)
+            if tempo:
+                return 'hint', tempo
+
         if r.hints == 8:
             return 'hint', find_stall(r)
         return 'discard', my_hand[0]
@@ -42,6 +44,8 @@ class ReferentialSievePlayer(AIPlayer):
         partner_hand = newest_to_oldest(r.h[partner_idx].cards)
         for card in partner_hand:
             hypothetical_color = card["name"][1]
+            if hypothetically_tempo(partner_hand, hypothetical_color):
+                continue
             slots_touched = get_slots_hypothetically_touched(partner_hand, hypothetical_color)
             slots_newly_touched = [slot for slot in slots_touched if not currently_touched(partner_hand[slot]) and partner_hand[slot] not in self.partner_instructed_plays]
             if len(slots_newly_touched) == 0:
@@ -50,12 +54,12 @@ class ReferentialSievePlayer(AIPlayer):
             slots_currently_touched = get_slots_currently_touched(partner_hand) + [partner_hand.index(play) for play in self.partner_instructed_plays if play["position"] == -1]
             referenced_card = get_referenced_card(partner_hand, focus, slots_currently_touched)
             # print('hint', (hypothetical_color, slots_newly_touched, focus, slots_currently_touched, referenced_card))
-            if is_playable(referenced_card, r.progress) and not referenced_card["known"]:
+            if is_playable(referenced_card, r.progress):
                 self.partner_instructed_plays.append(referenced_card)
                 return partner_idx, hypothetical_color
         return None
 
-    def was_tempo_clue(self, r, identified_plays):
+    def was_tempo(self, r, identified_plays):
         if len(r.playHistory) == 0:
             return False
 
@@ -64,7 +68,7 @@ class ReferentialSievePlayer(AIPlayer):
             return False
         _who, most_recent_hint = most_recent_move
         for play in identified_plays:
-            if len(play["direct"]) == 2 and play["direct"][-1] == most_recent_hint and play not in self.my_instructed_plays:
+            if len(play["direct"]) >= 2 and play["direct"][-1] == most_recent_hint and play not in self.my_instructed_plays:
                 return True
         return False
 
@@ -92,6 +96,15 @@ class ReferentialSievePlayer(AIPlayer):
         pass
 
 
+def hypothetically_tempo(hand, hint):
+    for card in hand:
+        if hint in SUIT_CONTENTS:
+            if hint == card["name"][1] and card["name"][0] in card["direct"]:
+                return True
+        else:
+            if hint == card["name"][0] and card["name"][1] in card["direct"]:
+                return True
+    return False
 
 
 def find_stall(r):
@@ -104,7 +117,7 @@ def find_tempo(r):
     partner_hand = newest_to_oldest(r.h[partner_idx].cards)
     for slot in get_slots_currently_touched(partner_hand):
         card = partner_hand[slot]
-        if not card["known"] and is_playable(card, r.progress):
+        if len(set(card["direct"])) < 2 and is_playable(card, r.progress):
             if card["direct"][-1] in SUIT_CONTENTS:
                 return partner_idx, card["name"][1]
             else:
