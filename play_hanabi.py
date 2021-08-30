@@ -9,17 +9,17 @@ import json, io, os
 from hanabi_classes import *
 
 def to_json (r, action):
-    actionType = ["hint", "play", "discard"].index(action[0])
-    if actionType == 0:
+    actionType = ["play", "discard", "hint"].index(action[0])
+    if actionType == 2:
         target = action[1][0]
         clue = action[1][1]
         if clue in r.suits:
-            clueType = 1
+            clueType = 0
             clueValue = r.suits.index(clue)
         else:
-            clueType = 0
+            clueType = 1
             clueValue = int(clue)
-        dic = {"type":actionType, "target":target, "clue":{"type":clueType, "value":clueValue}}
+        dic = {"type":actionType + clueType, "target":target, "value":clueValue}
     else:
         target=action[1]['cardNo']
 
@@ -28,6 +28,9 @@ def to_json (r, action):
 
 def play_one_round(gameType, players, names, verbosity, lossScore, isPoliced, writeOutput, debug):
     """Play a full round and return the score (int)."""
+    for i in range(len(players)):
+        for c in range(10 * (5 if gameType == 'vanilla' else 6)):
+            debug[('note', i, c)] = ''
 
     r = Round(gameType, players, names, verbosity, isPoliced, debug) # Instance of a single Hanabi round
     r.generate_deck_and_deal_hands()
@@ -53,7 +56,7 @@ def play_one_round(gameType, players, names, verbosity, lossScore, isPoliced, wr
         actions = list(map(lambda action: to_json(r, action), r.playHistory))
         handSize = 4
         if r.nPlayers < 4: handSize += 1
-        startDeck = list(map(lambda card: {"rank": int(card[0]), "suit": r.suits.index(card[1])}, r.startingDeck))
+        startDeck = list(map(lambda card: {"rank": int(card[0]), "suitIndex": r.suits.index(card[1])}, r.startingDeck))
         notes = [[debug[('note', i, c)] for c in range(10 * (5 if gameType == 'vanilla' else 6))] for i in range(r.nPlayers)]
         players = names
         if gameType == 'rainbow': variant = "Rainbow (6 Suits)"
@@ -63,9 +66,6 @@ def play_one_round(gameType, players, names, verbosity, lossScore, isPoliced, wr
         with io.open('log.json', 'a', encoding='utf-8') as f:
             f.write(json.dumps(output, ensure_ascii=False))
             f.write('\n\n')
-        for i in range(len(players)):
-            for c in range(10 * (5 if gameType == 'vanilla' else 6)):
-                debug[('note', i, c)] = ''
 
 
     if r.lightning == N_LIGHTNING and lossScore == 'zero':

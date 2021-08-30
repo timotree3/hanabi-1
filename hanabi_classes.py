@@ -135,8 +135,8 @@ class Round(object):
         if self.nPlayers < 4:
             handSize += 1
         for i in range(self.nPlayers): # Deal cards to all players.
-            for j in range(handSize):
-                self.h[i].add(self.draw(), self.turnNumber - handSize + j, self.startingDeckSize-len(self.deck)-1)
+            for j in reversed(range(handSize)):
+                self.h[i].add(self.draw(), self.turnNumber, self.startingDeckSize-len(self.deck)-1)
             if self.verbose:
                 self.h[i].show(self.zazz[0], self.logger)
                 self.zazz[0] = ' ' * len(self.zazz[0])
@@ -184,7 +184,7 @@ class Round(object):
         self.playHistory.append(play)
         self.progressHistory.append(dict.copy(self.progress))
 
-        verboseHandAtStart = ' '.join([card['name'] for card in hand.cards])
+        verboseHandAtStart = ' '.join([card['name'] for card in reversed(hand.cards)])
         if playType == 'hint':
             assert self.hints != 0
             targetPlayer, info = playValue
@@ -212,6 +212,7 @@ class Round(object):
             assert card in hand
 
             desc = card['name']
+            desc += ' from slot {}'.format(len(hand.cards) - hand.cards.index(card))
 
             if playType == 'discard':
                 if self.replace_card(card, hand):
