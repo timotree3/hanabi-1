@@ -265,7 +265,7 @@ class Round(object):
 
         def show(self, zazz, logger):
             """Print cards (verbose output only)."""
-            out = [card['name'] for card in self.cards]
+            out = [card['name'] for card in reversed(self.cards)]
             logger.info(zazz + ' ' + self.name + ': ' + ' '.join(out))
 
         def add(self, newCard, turnNumber, cardNo):
