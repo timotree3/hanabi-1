@@ -18,15 +18,15 @@ class ReferentialSievePlayer(AIPlayer):
 
     def play(self, r):
         my_hand = newest_to_oldest(r.h[r.whoseTurn].cards)
+        partner_idx = (r.whoseTurn + 1) % r.nPlayers
+        partner_hand = newest_to_oldest(r.h[partner_idx].cards)
+        self.my_instructed_plays = [play for play in self.my_instructed_plays if play in my_hand]
+        self.partner_instructed_plays = [play for play in self.partner_instructed_plays if play in partner_hand]
         identified_plays = deduce_plays(my_hand, r.progress, r.suits)
         play = self.get_instructed_play(r)
         was_tempo = self.was_tempo(r, identified_plays)
         if play and not was_tempo:
             self.my_instructed_plays.append(play)
-        if self.my_instructed_plays:
-            return 'play', self.my_instructed_plays.pop(0)
-        if identified_plays:
-            return 'play', identified_plays[0]
         if r.hints > 0:
             hint = self.find_hint(r)
             if hint:
@@ -34,6 +34,10 @@ class ReferentialSievePlayer(AIPlayer):
             tempo = find_tempo(r)
             if tempo:
                 return 'hint', tempo
+        if self.my_instructed_plays:
+            return 'play', self.my_instructed_plays.pop(0)
+        if identified_plays:
+            return 'play', identified_plays[0]
 
         if r.hints == 8:
             return 'hint', find_stall(r)
@@ -51,7 +55,7 @@ class ReferentialSievePlayer(AIPlayer):
             if len(slots_newly_touched) == 0:
                 continue
             focus = get_focus(slots_newly_touched)
-            slots_currently_touched = get_slots_currently_touched(partner_hand) + [partner_hand.index(play) for play in self.partner_instructed_plays if play["position"] == -1]
+            slots_currently_touched = get_slots_currently_touched(partner_hand) + [partner_hand.index(play) for play in self.partner_instructed_plays]
             referenced_card = get_referenced_card(partner_hand, focus, slots_currently_touched)
             # print('hint', (hypothetical_color, slots_newly_touched, focus, slots_currently_touched, referenced_card))
             if is_playable(referenced_card, r.progress):
@@ -88,7 +92,7 @@ class ReferentialSievePlayer(AIPlayer):
         if len(slots_newly_touched) == 0:
             return None
         focus = get_focus(slots_newly_touched)
-        slots_previously_touched = get_slots_previously_touched(my_hand, most_recent_hint) + [my_hand.index(play) for play in self.my_instructed_plays if play["position"] == -1]
+        slots_previously_touched = get_slots_previously_touched(my_hand, most_recent_hint) + [my_hand.index(play) for play in self.my_instructed_plays]
         return get_referenced_card(my_hand, focus, slots_previously_touched)
 
     def end_game_logging(self):
