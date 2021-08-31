@@ -2,7 +2,7 @@
 """
 
 from hanabi_classes import *
-from bot_utils import is_playable, deduce_plays
+from bot_utils import is_playable, deduce_plays, is_critical
 
 class ReferentialSievePlayer(AIPlayer):
 
@@ -14,6 +14,8 @@ class ReferentialSievePlayer(AIPlayer):
         """Can be overridden to perform initialization, but must call super"""
         self.my_instructed_plays = []
         self.partner_instructed_plays = []
+        self.my_instructed_discard = None
+        self.partner_instructed_discard = None
         super(ReferentialSievePlayer, self).__init__(*args)
 
     def play(self, r):
@@ -22,6 +24,10 @@ class ReferentialSievePlayer(AIPlayer):
         partner_hand = newest_to_oldest(r.h[partner_idx].cards)
         self.my_instructed_plays = [play for play in self.my_instructed_plays if play in my_hand]
         self.partner_instructed_plays = [play for play in self.partner_instructed_plays if play in partner_hand]
+        if self.my_instructed_discard not in my_hand or my_hand[0]["time"] > self.my_instructed_discard["time"]:
+            self.my_instructed_discard = None
+        if self.partner_instructed_discard not in partner_hand or partner_hand[0]["time"] > self.partner_instructed_discard["time"]:
+            self.partner_instructed_discard = None
         identified_plays = deduce_plays(my_hand, r.progress, r.suits)
         partner_identified_plays = deduce_plays(partner_hand, r.progress, r.suits)
         play = self.get_instructed_play(r)
@@ -30,10 +36,16 @@ class ReferentialSievePlayer(AIPlayer):
         was_fix = self.was_fix(r, trashes)
         if play and not was_tempo and not was_fix:
             self.my_instructed_plays.append(play)
+        discard = self.get_instructed_discard(r)
+        if discard and not was_tempo and not was_fix:
+            self.my_instructed_discard = discard
         partner_loaded = self.partner_instructed_plays != [] or partner_identified_plays != []
         pace = get_pace(r)
-        partner_musnt_discard = not partner_loaded and (pace <= 0 or useful(r, partner_hand[0]["name"]))
-        if r.hints > 0 and partner_musnt_discard:
+        my_chop = self.my_instructed_discard if self.my_instructed_discard else my_hand[0]
+        partner_chop = self.partner_instructed_discard if self.partner_instructed_discard else partner_hand[0]
+        partner_chop_useful = useful(r, partner_chop["name"])
+        partner_shouldnt_discard = not partner_loaded and (pace <= 0 or partner_chop_useful)
+        if r.hints > 0 and partner_shouldnt_discard:
             hint = self.find_hint(r)
             if hint:
                 return 'hint', hint
@@ -41,8 +53,12 @@ class ReferentialSievePlayer(AIPlayer):
             if tempo:
                 return 'hint', tempo
             fix = find_fix(r)
-            if fix:
+            if fix and partner_chop_useful:
                 return 'hint', fix
+        if r.hints > 0 and not partner_loaded:
+            save = self.find_save(r)
+            if save:
+                return 'hint', save
         if self.my_instructed_plays:
             return 'play', self.my_instructed_plays.pop(0)
         if identified_plays:
@@ -55,10 +71,10 @@ class ReferentialSievePlayer(AIPlayer):
             if tempo:
                 return 'hint', tempo
         if r.hints == 8 or (r.hints > 0 and partner_loaded and pace <= 1):
-            return 'hint', find_stall(r)
+            return 'hint', self.find_stall(r)
         if trashes:
             return 'discard', trashes[0]
-        return 'discard', my_hand[0]
+        return 'discard', my_chop
 
     def find_hint(self, r):
         partner_idx = (r.whoseTurn + 1) % r.nPlayers
@@ -125,9 +141,72 @@ class ReferentialSievePlayer(AIPlayer):
         slots_previously_touched = get_slots_previously_touched(my_hand, most_recent_hint) + [my_hand.index(play) for play in self.my_instructed_plays]
         return get_referenced_card(my_hand, focus, slots_previously_touched)
 
+    def get_instructed_discard(self, r):
+        if len(r.playHistory) == 0:
+            return None
+        my_hand = newest_to_oldest(r.h[r.whoseTurn].cards)
+
+        most_recent_move_type, most_recent_move = r.playHistory[-1]
+        if most_recent_move_type != 'hint':
+            return None
+        _who, most_recent_hint = most_recent_move
+        if most_recent_hint in VANILLA_SUITS:
+            return None
+        slots_touched = get_slots_touched(my_hand, most_recent_hint)
+        slots_newly_touched = [slot for slot in slots_touched if not previously_touched(my_hand[slot], most_recent_hint) and my_hand[slot] not in self.my_instructed_plays]
+        if len(slots_newly_touched) == 0:
+            return None
+        focus = get_focus(slots_newly_touched)
+        slots_previously_touched = get_slots_previously_touched(my_hand, most_recent_hint) + [my_hand.index(play) for play in self.my_instructed_plays]
+        return get_referenced_card(my_hand, focus, slots_previously_touched)
+
+
+    def find_save(self, r, stalling = False):
+        partner_idx = (r.whoseTurn + 1) % r.nPlayers
+        partner_hand = newest_to_oldest(r.h[partner_idx].cards)
+        if not stalling and not is_critical(partner_hand[0]["name"], r):
+            return None
+        unclued = get_unclued(partner_hand, self.partner_instructed_plays)
+        for card in unclued:
+            hypothetical_rank = card["name"][0]
+            slots_touched = get_slots_hypothetically_touched(partner_hand, hypothetical_rank)
+            slots_newly_touched = [slot for slot in slots_touched if partner_hand[slot] in unclued]
+            focus = get_focus(slots_newly_touched)
+            slots_currently_touched = get_slots_currently_touched(partner_hand) + [partner_hand.index(play) for play in self.partner_instructed_plays]
+            referenced_card = get_referenced_card(partner_hand, focus, slots_currently_touched)
+            if not is_critical(referenced_card["name"], r):
+                self.partner_instructed_disard = referenced_card
+                return partner_idx, hypothetical_rank
+
+    def find_stall(self, r):
+        save = self.find_save(r, stalling=True)
+        if save:
+            return save
+        partner_idx = (r.whoseTurn + 1) % r.nPlayers
+        partner_hand = newest_to_oldest(r.h[partner_idx].cards)
+        clued = get_slots_currently_touched(partner_hand) + [partner_hand.index(play) for play in self.partner_instructed_plays]
+        for clued_slot in clued:
+            card = partner_hand[clued_slot]
+            hypothetical_rank = card["name"][0]
+            slots_touched = get_slots_hypothetically_touched(partner_hand, hypothetical_rank)
+            slots_newly_touched = [slot for slot in slots_touched if partner_hand[slot] not in clued]
+            if len(slots_newly_touched) == 0:
+                return partner_idx, hypothetical_rank
+            hypothetical_color = card["name"][1]
+            slots_touched = get_slots_hypothetically_touched(partner_hand, hypothetical_color)
+            slots_newly_touched = [slot for slot in slots_touched if partner_hand[slot] not in clued]
+            if len(slots_newly_touched) == 0:
+                return partner_idx, hypothetical_color
+        # Fall back to random clue
+        return partner_idx, partner_hand[0]["name"][0]
+
+
     def end_game_logging(self):
         """Can be overridden to perform logging at the end of the game"""
         pass
+
+def get_unclued(hand, instructed_plays):
+    return [card for card in hand if card["direct"] == [] and card not in instructed_plays]
 
 def get_known_trash(r, hand):
     return [card for card in hand if is_known_trash(r, card)]
@@ -191,11 +270,6 @@ def maxStacks(r):
         if discards[suit][rank] == maxDiscards[rank]:
             maxScore[suit] = min(maxScore[suit], rank)
     return maxScore
-
-def find_stall(r):
-    partner_idx = (r.whoseTurn + 1) % r.nPlayers
-    partner_hand = newest_to_oldest(r.h[partner_idx].cards)
-    return partner_idx, partner_hand[-1]["name"][0]
 
 def find_tempo(r):
     partner_idx = (r.whoseTurn + 1) % r.nPlayers
