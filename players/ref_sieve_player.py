@@ -42,6 +42,9 @@ class ReferentialSievePlayer(AIPlayer):
 
         if r.hints == 8:
             return 'hint', find_stall(r)
+        trash = find_trash(r, my_hand)
+        if trash:
+            return 'discard', trash
         return 'discard', my_hand[0]
 
     def find_hint(self, r):
@@ -99,6 +102,29 @@ class ReferentialSievePlayer(AIPlayer):
         """Can be overridden to perform logging at the end of the game"""
         pass
 
+def find_trash(r, hand):
+    for card in hand:
+        if all([not useful(r, identity) for identity in get_possible_identities(card)]):
+            return card
+    return None
+
+def get_possible_identities(card):
+    possible_suits = set(VANILLA_SUITS)
+    possible_ranks = set(SUIT_CONTENTS)
+    for positive in card["direct"]:
+        if positive in SUIT_CONTENTS:
+            possible_ranks = set([positive])
+        else:
+            possible_suits = set([positive])
+    for negative in card["indirect"]:
+        try:
+            if negative in SUIT_CONTENTS:
+                    possible_ranks.remove(negative)
+            else:
+                possible_suits.remove(negative)
+        except KeyError:
+            pass
+    return [rank + suit for rank in possible_ranks for suit in possible_suits]
 
 def hypothetically_tempo(hand, hint, instructed_plays, progress):
     for card in hand:
@@ -123,17 +149,21 @@ def pace(r):
     return drawsLeft - playsLeft
 
 def maxScore(r):
+    return sum(maxStacks(r).values())
+
+def maxStacks(r):
     maxDiscards = [3, 2, 2, 2, 1]
     discards = dict([(suit, [0 for i in range(5)]) for suit in VANILLA_SUITS])
     maxScore = dict([(suit, 5) for suit in VANILLA_SUITS])
     for card in r.discardpile:
         suit = card[1]
         rank = int(card[0]) - 1
+        if r.progress[suit] > rank:
+            continue
         discards[suit][rank] += 1
         if discards[suit][rank] == maxDiscards[rank]:
             maxScore[suit] = min(maxScore[suit], rank)
-    return sum(maxScore.values())
-
+    return maxScore
 
 def find_stall(r):
     partner_idx = (r.whoseTurn + 1) % r.nPlayers
@@ -190,4 +220,4 @@ def get_referenced_card(hand, focus, previously_touched):
 def useful(r, card_name):
     suit = card_name[1]
     rank = int(card_name[0])
-    return r.progress[suit] < rank
+    return r.progress[suit] < rank and rank <= maxStacks(r)[suit]
