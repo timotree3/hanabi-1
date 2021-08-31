@@ -49,7 +49,7 @@ class ReferentialSievePlayer(AIPlayer):
         partner_hand = newest_to_oldest(r.h[partner_idx].cards)
         for card in partner_hand:
             hypothetical_color = card["name"][1]
-            if hypothetically_tempo(partner_hand, hypothetical_color):
+            if hypothetically_tempo(partner_hand, hypothetical_color, self.partner_instructed_plays, r.progress):
                 continue
             slots_touched = get_slots_hypothetically_touched(partner_hand, hypothetical_color)
             slots_newly_touched = [slot for slot in slots_touched if not currently_touched(partner_hand[slot]) and partner_hand[slot] not in self.partner_instructed_plays]
@@ -72,7 +72,7 @@ class ReferentialSievePlayer(AIPlayer):
             return False
         _who, most_recent_hint = most_recent_move
         for play in identified_plays:
-            if len(play["direct"]) >= 2 and play["direct"][-1] == most_recent_hint and play not in self.my_instructed_plays:
+            if len(play["direct"]) >= 2 and play["direct"][-1] == most_recent_hint and most_recent_hint not in play["direct"][:-1] and play not in self.my_instructed_plays:
                 return True
         return False
 
@@ -100,8 +100,14 @@ class ReferentialSievePlayer(AIPlayer):
         pass
 
 
-def hypothetically_tempo(hand, hint):
+def hypothetically_tempo(hand, hint, instructed_plays, progress):
     for card in hand:
+        if card in instructed_plays:
+            continue
+        if not is_playable(card, progress):
+            continue
+        if hint in card["direct"]:
+            continue
         if hint in SUIT_CONTENTS:
             if hint == card["name"][1] and card["name"][0] in card["direct"]:
                 return True
