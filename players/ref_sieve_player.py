@@ -29,8 +29,9 @@ class ReferentialSievePlayer(AIPlayer):
         if play and not was_tempo:
             self.my_instructed_plays.append(play)
         partner_loaded = self.partner_instructed_plays != [] or partner_identified_plays != []
-        partner_chop_interesting = not partner_loaded and useful(r, partner_hand[0]["name"])
-        if r.hints >= 7 or (r.hints > 0 and (pace(r) <= 2 or partner_chop_interesting)):
+        pace = get_pace(r)
+        partner_musnt_discard = not partner_loaded and (pace <= 0 or useful(r, partner_hand[0]["name"]))
+        if r.hints > 0 and partner_musnt_discard:
             hint = self.find_hint(r)
             if hint:
                 return 'hint', hint
@@ -38,14 +39,20 @@ class ReferentialSievePlayer(AIPlayer):
             if tempo:
                 return 'hint', tempo
             fix = find_fix(r)
-            if fix and partner_chop_interesting:
+            if fix:
                 return 'hint', fix
         if self.my_instructed_plays:
             return 'play', self.my_instructed_plays.pop(0)
         if identified_plays:
             return 'play', identified_plays[0]
-
-        if r.hints == 8:
+        if r.hints >= 7 or (r.hints > 0 and pace <= 2):
+            hint = self.find_hint(r)
+            if hint:
+                return 'hint', hint
+            tempo = find_tempo(r)
+            if tempo:
+                return 'hint', tempo
+        if r.hints == 8 or (r.hints > 0 and partner_loaded and pace <= 1):
             return 'hint', find_stall(r)
         trash = find_trash(r, my_hand)
         if trash:
@@ -148,7 +155,7 @@ def hypothetically_tempo(hand, hint, instructed_plays, progress):
     return False
 
 
-def pace(r):
+def get_pace(r):
     drawsLeft = len(r.deck) + (r.gameOverTimer + 1 if r.gameOverTimer else r.nPlayers)
     playsLeft = maxScore(r) - sum(r.progress.values())
     return drawsLeft - playsLeft
