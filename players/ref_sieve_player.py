@@ -175,8 +175,8 @@ def find_tempo(r):
     partner_hand = newest_to_oldest(r.h[partner_idx].cards)
     for slot in get_slots_currently_touched(partner_hand):
         card = partner_hand[slot]
-        if len(set(card["direct"])) < 2 and is_playable(card, r.progress):
-            if card["direct"][-1] in SUIT_CONTENTS:
+        if len(set(card["direct"])) == 1 and is_playable(card, r.progress):
+            if card["direct"][0] in SUIT_CONTENTS:
                 return partner_idx, card["name"][1]
             else:
                 return partner_idx, card["name"][0]
