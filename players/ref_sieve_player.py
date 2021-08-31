@@ -56,7 +56,7 @@ class ReferentialSievePlayer(AIPlayer):
             if fix and partner_chop_useful:
                 return 'hint', fix
         if r.hints > 0 and not partner_loaded:
-            save = self.find_save(r)
+            save = self.find_save(r, partner_chop)
             if save:
                 return 'hint', save
         if self.my_instructed_plays:
@@ -71,7 +71,7 @@ class ReferentialSievePlayer(AIPlayer):
             if tempo:
                 return 'hint', tempo
         if r.hints == 8 or (r.hints > 0 and partner_loaded and pace <= 1):
-            return 'hint', self.find_stall(r)
+            return 'hint', self.find_stall(r, partner_chop)
         if trashes:
             return 'discard', trashes[0]
         return 'discard', my_chop
@@ -161,10 +161,10 @@ class ReferentialSievePlayer(AIPlayer):
         return get_referenced_card(my_hand, focus, slots_previously_touched)
 
 
-    def find_save(self, r, stalling = False):
+    def find_save(self, r, partner_chop, stalling = False):
         partner_idx = (r.whoseTurn + 1) % r.nPlayers
         partner_hand = newest_to_oldest(r.h[partner_idx].cards)
-        if not stalling and not is_critical(partner_hand[0]["name"], r):
+        if not stalling and not is_critical(partner_chop["name"], r):
             return None
         unclued = get_unclued(partner_hand, self.partner_instructed_plays)
         for card in unclued:
@@ -178,8 +178,8 @@ class ReferentialSievePlayer(AIPlayer):
                 self.partner_instructed_discard = referenced_card
                 return partner_idx, hypothetical_rank
 
-    def find_stall(self, r):
-        save = self.find_save(r, stalling=True)
+    def find_stall(self, r, partner_chop):
+        save = self.find_save(r, partner_chop, stalling=True)
         if save:
             return save
         partner_idx = (r.whoseTurn + 1) % r.nPlayers
