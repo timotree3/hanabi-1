@@ -26,7 +26,9 @@ class ReferentialSievePlayer(AIPlayer):
         partner_identified_plays = deduce_plays(partner_hand, r.progress, r.suits)
         play = self.get_instructed_play(r)
         was_tempo = self.was_tempo(r, identified_plays)
-        if play and not was_tempo:
+        trashes = get_known_trash(r, my_hand)
+        was_fix = self.was_fix(r, trashes)
+        if play and not was_tempo and not was_fix:
             self.my_instructed_plays.append(play)
         partner_loaded = self.partner_instructed_plays != [] or partner_identified_plays != []
         pace = get_pace(r)
@@ -54,9 +56,8 @@ class ReferentialSievePlayer(AIPlayer):
                 return 'hint', tempo
         if r.hints == 8 or (r.hints > 0 and partner_loaded and pace <= 1):
             return 'hint', find_stall(r)
-        trash = find_trash(r, my_hand)
-        if trash:
-            return 'discard', trash
+        if trashes:
+            return 'discard', trashes[0]
         return 'discard', my_hand[0]
 
     def find_hint(self, r):
@@ -91,6 +92,20 @@ class ReferentialSievePlayer(AIPlayer):
                 return True
         return False
 
+    def was_fix(self, r, trashes):
+        if len(r.playHistory) == 0:
+            return False
+
+        most_recent_move_type, most_recent_move = r.playHistory[-1]
+        if most_recent_move_type != 'hint':
+            return False
+        _who, most_recent_hint = most_recent_move
+        for trash in trashes:
+            if len(trash["direct"]) >= 2 and trash["direct"][-1] == most_recent_hint and most_recent_hint not in trash["direct"][:-1]:
+                return True
+        return False
+
+
     def get_instructed_play(self, r):
         if len(r.playHistory) == 0:
             return None
@@ -114,11 +129,11 @@ class ReferentialSievePlayer(AIPlayer):
         """Can be overridden to perform logging at the end of the game"""
         pass
 
-def find_trash(r, hand):
-    for card in hand:
-        if all([not useful(r, identity) for identity in get_possible_identities(card)]):
-            return card
-    return None
+def get_known_trash(r, hand):
+    return [card for card in hand if is_known_trash(r, card)]
+
+def is_known_trash(r, card):
+    return all([not useful(r, identity) for identity in get_possible_identities(card)])
 
 def get_possible_identities(card):
     possible_suits = set(VANILLA_SUITS)
