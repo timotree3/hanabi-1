@@ -28,13 +28,18 @@ class ReferentialSievePlayer(AIPlayer):
         was_tempo = self.was_tempo(r, identified_plays)
         if play and not was_tempo:
             self.my_instructed_plays.append(play)
-        if r.hints >= 7 or (r.hints > 0 and (pace(r) <= 2 or (self.partner_instructed_plays == [] and partner_identified_plays == [] and useful(r, partner_hand[0]["name"])))):
+        partner_loaded = self.partner_instructed_plays != [] or partner_identified_plays != []
+        partner_chop_interesting = not partner_loaded and useful(r, partner_hand[0]["name"])
+        if r.hints >= 7 or (r.hints > 0 and (pace(r) <= 2 or partner_chop_interesting)):
             hint = self.find_hint(r)
             if hint:
                 return 'hint', hint
             tempo = find_tempo(r)
             if tempo:
                 return 'hint', tempo
+            fix = find_fix(r)
+            if fix and partner_chop_interesting:
+                return 'hint', fix
         if self.my_instructed_plays:
             return 'play', self.my_instructed_plays.pop(0)
         if identified_plays:
@@ -144,7 +149,7 @@ def hypothetically_tempo(hand, hint, instructed_plays, progress):
 
 
 def pace(r):
-    drawsLeft = len(r.deck) + (r.gameOverTimer + 1 if r.gameOverTimer else 0)
+    drawsLeft = len(r.deck) + (r.gameOverTimer + 1 if r.gameOverTimer else r.nPlayers)
     playsLeft = maxScore(r) - sum(r.progress.values())
     return drawsLeft - playsLeft
 
@@ -180,6 +185,18 @@ def find_tempo(r):
                 return partner_idx, card["name"][1]
             else:
                 return partner_idx, card["name"][0]
+
+def find_fix(r):
+    partner_idx = (r.whoseTurn + 1) % r.nPlayers
+    partner_hand = newest_to_oldest(r.h[partner_idx].cards)
+    for slot in get_slots_currently_touched(partner_hand):
+        card = partner_hand[slot]
+        if len(set(card["direct"])) == 1 and not useful(r, card["name"]):
+            if card["direct"][0] in SUIT_CONTENTS:
+                return partner_idx, card["name"][1]
+            else:
+                return partner_idx, card["name"][0]
+
 
 def newest_to_oldest(cards):
     return list(reversed(sorted(cards, key = lambda card: card["time"])))
