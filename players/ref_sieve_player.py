@@ -175,7 +175,7 @@ class ReferentialSievePlayer(AIPlayer):
             slots_currently_touched = get_slots_currently_touched(partner_hand) + [partner_hand.index(play) for play in self.partner_instructed_plays]
             referenced_card = get_referenced_card(partner_hand, focus, slots_currently_touched)
             if not is_critical(referenced_card["name"], r):
-                self.partner_instructed_disard = referenced_card
+                self.partner_instructed_discard = referenced_card
                 return partner_idx, hypothetical_rank
 
     def find_stall(self, r):
