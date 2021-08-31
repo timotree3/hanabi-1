@@ -288,17 +288,7 @@ class Round(object):
                     return i
 
         def card_equals(self, card1, card2):
-            """Test for equality using only the below keys
-               do not use name, as that could be removed if Policing"""
-            verify_keys = ['sec_name', 'time', 'direct', 'indirect', 'known']
-
-            if card2 is None or card1 is None:
-                return False
-
-            for key in verify_keys:
-                if card1[key] != card2[key]:
-                    return False
-            return True
+            return card1["cardNo"] == card2["cardNo"]
 
         def __contains__(self, card):
             """Convenience function to determine if card in hand"""
