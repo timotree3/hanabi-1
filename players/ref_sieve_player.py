@@ -3,6 +3,7 @@
 
 from hanabi_classes import *
 from bot_utils import is_playable, deduce_plays, is_critical as is_last_copy
+from copy import deepcopy
 
 class ReferentialSievePlayer(AIPlayer):
 
@@ -12,192 +13,284 @@ class ReferentialSievePlayer(AIPlayer):
 
     def __init__(self, *args):
         """Can be overridden to perform initialization, but must call super"""
-        self.my_instructed_plays = []
-        self.partner_instructed_plays = []
-        self.my_instructed_discard = None
-        self.partner_instructed_discard = None
-        self.me_locked = False
-        self.partner_locked = False
         super(ReferentialSievePlayer, self).__init__(*args)
 
     def play(self, r):
-        my_hand = newest_to_oldest(r.h[r.whoseTurn].cards)
-        partner_idx = (r.whoseTurn + 1) % r.nPlayers
-        partner_hand = newest_to_oldest(r.h[partner_idx].cards)
-        self.my_instructed_plays = [play for play in self.my_instructed_plays if play in my_hand]
-        self.partner_instructed_plays = [play for play in self.partner_instructed_plays if play in partner_hand]
-        if self.my_instructed_discard not in my_hand or my_hand[0]["time"] > self.my_instructed_discard["time"]:
-            self.my_instructed_discard = None
-            self.me_locked = False
-        if self.partner_instructed_discard not in partner_hand or partner_hand[0]["time"] > self.partner_instructed_discard["time"]:
-            self.partner_instructed_discard = None
-            self.partner_locked = False
-        # print('PID', self.partner_instructed_discard)
-        identified_plays = deduce_plays(my_hand, r.progress, r.suits)
-        partner_identified_plays = deduce_plays(partner_hand, r.progress, r.suits)
-        play = self.get_instructed_play(r)
-        was_tempo = self.was_tempo(r, identified_plays)
-        trashes = get_known_trash(r, my_hand)
-        was_fix = self.was_fix(r, trashes)
-        if play and not was_tempo and not was_fix:
-            self.my_instructed_plays.append(play)
-        discard = self.get_instructed_discard(r)
-        if discard and not was_tempo and not was_fix:
-            self.my_instructed_discard = discard
-            self.me_locked = discard is my_hand[0] and r.hints != 7
-        partner_loaded = self.partner_instructed_plays != [] or partner_identified_plays != []
-        pace = get_pace(r)
-        my_chop = self.my_instructed_discard if self.my_instructed_discard else my_hand[0]
-        partner_chop = self.partner_instructed_discard if self.partner_instructed_discard else partner_hand[0]
-        partner_chop_useful = useful(r, partner_chop["name"]) or self.partner_locked
-        partner_shouldnt_discard = not partner_loaded and (pace <= 0 or partner_chop_useful)
-        if r.hints > 0 and partner_shouldnt_discard:
-            hint = self.find_hint(r)
-            if hint:
-                return 'hint', hint
-            tempo = find_tempo(r)
-            if tempo:
-                return 'hint', tempo
-            fix = find_fix(r)
-            if fix and partner_chop_useful:
-                return 'hint', fix
-        if r.hints > 0 and not partner_loaded and not self.partner_locked:
-            save = self.find_save(r, partner_chop)
-            if save:
-                return 'hint', save
-        if self.my_instructed_plays:
-            return 'play', self.my_instructed_plays.pop(0)
-        if identified_plays:
-            return 'play', identified_plays[0]
-        if r.hints >= 7 or (r.hints > 0 and pace <= 2):
-            hint = self.find_hint(r)
-            if hint:
-                return 'hint', hint
-            tempo = find_tempo(r)
-            if tempo:
-                return 'hint', tempo
-        if r.hints == 8 or (r.hints > 0 and partner_loaded and pace <= 1):
-            return 'hint', self.find_save(r, partner_chop, stalling = True)
-        if trashes:
-            return 'discard', trashes[0]
-        if self.me_locked:
-            return 'discard', find_sacrifice(r, my_hand)
-        return 'discard', my_chop
-
-    def find_hint(self, r):
-        partner_idx = (r.whoseTurn + 1) % r.nPlayers
-        partner_hand = newest_to_oldest(r.h[partner_idx].cards)
-        for card in partner_hand:
-            hypothetical_color = card["name"][1]
-            if hypothetically_tempo(partner_hand, hypothetical_color, self.partner_instructed_plays, r.progress):
-                continue
-            slots_touched = get_slots_hypothetically_touched(partner_hand, hypothetical_color)
-            slots_newly_touched = [slot for slot in slots_touched if not currently_touched(partner_hand[slot]) and partner_hand[slot] not in self.partner_instructed_plays]
-            if len(slots_newly_touched) == 0:
-                continue
-            focus = get_focus(slots_newly_touched)
-            slots_currently_touched = get_slots_currently_touched(partner_hand) + [partner_hand.index(play) for play in self.partner_instructed_plays]
-            referenced_card = get_referenced_card(partner_hand, focus, slots_currently_touched)
-            if is_playable(referenced_card, r.progress):
-                self.partner_instructed_plays.append(referenced_card)
-                return partner_idx, hypothetical_color
-        return None
-
-    def was_tempo(self, r, identified_plays):
-        if len(r.playHistory) == 0:
-            return False
-
-        most_recent_move_type, most_recent_move = r.playHistory[-1]
-        if most_recent_move_type != 'hint':
-            return False
-        _who, most_recent_hint = most_recent_move
-        for play in identified_plays:
-            if len(play["direct"]) >= 2 and play["direct"][-1] == most_recent_hint and most_recent_hint not in play["direct"][:-1] and play not in self.my_instructed_plays:
-                return True
-        return False
-
-    def was_fix(self, r, trashes):
-        if len(r.playHistory) == 0:
-            return False
-
-        most_recent_move_type, most_recent_move = r.playHistory[-1]
-        if most_recent_move_type != 'hint':
-            return False
-        _who, most_recent_hint = most_recent_move
-        for trash in trashes:
-            if len(trash["direct"]) >= 2 and trash["direct"][-1] == most_recent_hint and most_recent_hint not in trash["direct"][:-1]:
-                return True
-        return False
+        r.HandHistory.append([newest_to_oldest(deepcopy(hand.cards)) if hand.seat != r.whoseTurn else 'redacted' for hand in r.h])
+        recent_actions = r.playHistory[-r.nPlayers]
+        if len(recent_actions) < r.nPlayers:
+            self.global_understanding = GlobalUnderstanding()
+        initialActor = r.whoseTurn - len(recent_actions)
+        for i, action in enumerate(recent_actions):
+            actor = (initialActor + i + r.nPlayers) % r.nPlayers
+            action_type, action = action
+            if action_type == 'play':
+                self.global_understanding.play(actor, action["name"], action["position"])
+            elif action_type == 'discard':
+                self.global_understanding.discard(actor, action["name"], action["position"])
+            elif action_type == 'hint':
+                receiver, value = action
+                hands_at_time = r.HandHistory[-len(recent_actions) + i]
+                touching = get_touching(hands_at_time[receiver], value)
+                self.global_understanding.clue(receiver, value, touching)
 
 
-    def get_instructed_play(self, r):
-        if len(r.playHistory) == 0:
-            return None
-        my_hand = newest_to_oldest(r.h[r.whoseTurn].cards)
+        return find_best_move(r.HandHistory[-1], r.whoseTurn, self.global_understanding)
 
-        most_recent_move_type, most_recent_move = r.playHistory[-1]
-        if most_recent_move_type != 'hint':
-            return None
-        _who, most_recent_hint = most_recent_move
-        if most_recent_hint in SUIT_CONTENTS:
-            return None
-        slots_touched = get_slots_touched(my_hand, most_recent_hint)
-        slots_newly_touched = [slot for slot in slots_touched if not previously_touched(my_hand[slot], most_recent_hint) and my_hand[slot] not in self.my_instructed_plays]
-        if len(slots_newly_touched) == 0:
-            return None
-        focus = get_focus(slots_newly_touched)
-        slots_previously_touched = get_slots_previously_touched(my_hand, most_recent_hint) + [my_hand.index(play) for play in self.my_instructed_plays]
-        return get_referenced_card(my_hand, focus, slots_previously_touched)
-
-    def get_instructed_discard(self, r):
-        if len(r.playHistory) == 0:
-            return None
-        my_hand = newest_to_oldest(r.h[r.whoseTurn].cards)
-
-        most_recent_move_type, most_recent_move = r.playHistory[-1]
-        if most_recent_move_type != 'hint':
-            return None
-        _who, most_recent_hint = most_recent_move
-        if most_recent_hint in VANILLA_SUITS:
-            return None
-        slots_touched = get_slots_touched(my_hand, most_recent_hint)
-        slots_newly_touched = [slot for slot in slots_touched if not previously_touched(my_hand[slot], most_recent_hint) and my_hand[slot] not in self.my_instructed_plays]
-        if len(slots_newly_touched) == 0:
-            return None
-        focus = get_focus(slots_newly_touched)
-        slots_previously_touched = get_slots_previously_touched(my_hand, most_recent_hint) + [my_hand.index(play) for play in self.my_instructed_plays]
-        return get_referenced_card(my_hand, focus, slots_previously_touched)
-
-    def find_save(self, r, partner_chop, stalling = False):
-        partner_idx = (r.whoseTurn + 1) % r.nPlayers
-        partner_hand = newest_to_oldest(r.h[partner_idx].cards)
-        if not stalling and not is_critical(r, partner_chop["name"]):
-            return None
-        unclued = get_unclued(partner_hand, self.partner_instructed_plays)
-        lock_clue = None
-        for card in unclued:
-            hypothetical_rank = card["name"][0]
-            slots_touched = get_slots_hypothetically_touched(partner_hand, hypothetical_rank)
-            slots_newly_touched = [slot for slot in slots_touched if partner_hand[slot] in unclued]
-            focus = get_focus(slots_newly_touched)
-            slots_currently_touched = get_slots_currently_touched(partner_hand) + [partner_hand.index(play) for play in self.partner_instructed_plays]
-            referenced_card = get_referenced_card(partner_hand, focus, slots_currently_touched)
-            if unclued[0] is referenced_card:
-                lock_clue = hypothetical_rank
-                continue
-            if not is_critical(r, referenced_card["name"]):
-                self.partner_instructed_discard = referenced_card
-                return partner_idx, hypothetical_rank
-        if len(unclued) == 0:
-            print('NEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEIGH')
-            return partner_idx, partner_chop["name"][0]
-        if r.hints != 8:
-            self.partner_locked = True
-        return partner_idx, lock_clue
 
     def end_game_logging(self):
         """Can be overridden to perform logging at the end of the game"""
         pass
+
+def find_best_move(hands, player, global_understanding):
+    if global_understanding.clue_tokens > 0:
+        for clue in get_possible_clues(hands, player):
+            simulated_hands = deepcopy(hands)
+            simulation = deepcopy(global_understanding)
+            simulation.clue(*clue)
+            for player_offset in range(1, len(hands)):
+                actor = (player + player_offset) % len(hands)
+                action_type, action = get_expected_action(player, simulation)
+                old_deck_size = simulation.deck_size
+                if action_type == 'play':
+                    slot = action
+                    simulation.play(actor, simulated_hands[actor][slot], slot)
+                    simulated_hands[actor].pop(slot)
+                    if old_deck_size > 0:
+                        simulated_hands[actor] = [set(simulation.unseen_copies.keys())] + simulated_hands[actor]
+                elif action_type == 'discard':
+                    slot = action
+                    simulation.discard(actor, simulated_hands[actor][slot], slot)
+                    simulated_hands[actor].pop(slot)
+                    if old_deck_size > 0:
+                        simulated_hands[actor] = [set(simulation.unseen_copies.keys())] + simulated_hands[actor]
+                else:
+                    raise "todo"
+
+
+
+
+
+def get_expected_action(player, global_understanding):
+
+
+
+
+class GlobalUnderstanding:
+    def __init__(self, suits = VANILLA_SUITS, n_players = 2, hand_size = 5):
+        self.clue_tokens = 8
+        self.play_stacks = dict([(suit, 0) for suit in suits])
+        self.strikes = 0
+        self.max_stacks = dict([(suit, 5) for suit in suits])
+        self.deck_size = len(suits) * SUIT_CONTENTS
+        self.unseen_copies = dict([(str(rank) + suit, SUIT_CONTENTS.count(str(rank))) for rank in range(1, 6) for suit in suits])
+        self.usable_copies = deepcopy(self.unseen_copies)
+        self.hand_possibilities = []
+        for player in range(n_players):
+            self.hand_possibilities.append([])
+            for card in range(hand_size):
+                self.draw(player)
+        self.instructed_plays = [[] for player in range(n_players)]
+        self.instructed_trash = [[] for player in range(n_players)]
+        self.instructed_chop = [None for player in range(n_players)]
+        self.instructed_to_lock = [False for player in range(n_players)]
+        self.turns_left = None
+
+    def draw(self, player, replacing = None):
+        if replacing is not None:
+            for i, slot in reversed(enumerate(self.instructed_plays[player])):
+                if slot < replacing:
+                    self.instructed_plays[player][i] += 1
+                elif slot == replacing:
+                    self.instructed_plays.pop(i)
+            for i, slot in reversed(enumerate(self.instructed_trash[player])):
+                if slot < replacing:
+                    self.instructed_trash[player][i] += 1
+                elif slot == replacing:
+                    self.instructed_trash.pop(i)
+            self.instructed_chop[player] = None
+            self.instructed_to_lock[player] = False
+
+            self.hand_possibilities[player].pop(replacing)
+        if self.deck_size > 0:
+            self.deck_size -= 1
+            new_card = set(self.unseen_copies.keys())
+            self.hand_possibilities[player] = [new_card] + self.hand_possibilities[player]
+            if self.deck_size == 0:
+                self.turns_left = len(self.hand_possibilities)
+
+    def reveal_copy(self, identity):
+        assert self.unseen_copies[identity] > 0
+        self.unseen_copies[identity] -= 1
+        if self.unseen_copies[identity] == 0:
+            self.last_copy_revealed(identity)
+
+
+    def last_copy_revealed(self, identity):
+        for hand in self.hand_possibilities:
+            for card in hand:
+                if len(card) == 1:
+                    continue
+                try:
+                    card.remove(identity)
+                except KeyError:
+                    continue
+                if len(card) == 1:
+                    self.reveal_copy(next(iter(card)))
+
+    def discard_copy(self, identity):
+        assert self.usable_copies[identity] > 0
+        self.usable_copies[identity] -= 1
+        if self.usable_copies[identity] == 0:
+            self.last_copy_discarded(identity)
+
+    def last_copy_discarded(self, identity):
+        suit, rank = parse_identity(identity)
+        self.max_stacks[suit] = min(rank - 1, self.max_stacks[suit])
+
+    def play(self, player, identity, slot):
+        suit, rank = parse_identity(identity)
+
+        if self.play_stacks[suit] == rank - 1:
+            self.play_stacks[suit] = rank
+        else:
+            self.strikes += 1
+            if self.strikes >= 3:
+                self.turns_left = 0
+                return
+        misplayed = self.play_stacks[suit] != rank
+
+        possibilities = self.hand_possibilities[player][slot]
+
+        self.interpret_play(player, identity, slot)
+
+        self.draw(player, replacing = slot)
+        if len(possibilities) > 1:
+            self.reveal_copy(identity)
+        if misplayed:
+            self.discard_copy(identity)
+
+    def interpret_play(self, player, identity, slot):
+        self.instructed_chop[player] = None
+        self.instructed_to_lock[player] = False
+
+    def discard(self, player, identity, slot):
+        suit, rank = parse_identity(identity)
+
+        self.interpret_discard(player, identity, slot)
+
+        self.draw(player, replacing = slot)
+        self.reveal_copy(identity)
+        self.discard_copy(identity)
+
+    def interpret_discard(self, player, identity, slot):
+        self.instructed_chop[player] = None
+        self.instructed_to_lock[player] = False
+
+    def clue(self, receiver, value, touching):
+        old_receiver_possibilities = deepcopy(self.hand_possibilities[receiver])
+
+        self.apply_information(self.hand_possibilities[receiver], value, touching)
+
+        # Bug?: old_receiver_possibilities doesn't account for newly revealed knowledge in giver's hand
+        self.interpret_clue(receiver, old_receiver_possibilities, value, touching)
+
+        self.hints -= 1
+
+    def apply_information(self, hand_possibilities, value, touching):
+        for slot, card_possibilities in enumerate(hand_possibilities):
+            if len(card_possibilities) == 1:
+                continue
+
+            if slot in touching:
+                card_possibilities = filter_touched(card_possibilities, value)
+            else:
+                card_possibilities = filter_untouched(card_possibilities, value)
+
+            if len(card_possibilities) == 1:
+                self.reveal_copy(next(iter(card_possibilities)))
+
+    def interpret_clue(self, receiver, old_receiver_possibilities, value, touching):
+        old_receiver_identified_plays = self.get_identified_plays(old_receiver_possibilities)
+        old_receiver_known_trashes = self.get_known_trashes(old_receiver_possibilities)
+        receiver_was_loaded = old_receiver_identified_plays or old_receiver_known_trashes or self.instructed_plays[receiver] or self.instructed_trash[receiver]
+
+        old_receiver_unclued = get_unclued(old_receiver_possibilities)
+        old_receiver_unclued = [slot for slot in old_receiver_unclued if slot not in self.instructed_plays[receiver] and slot not in self.instructed_trash[receiver]]
+
+        receiver_identified_plays = self.get_identified_plays(new_receiver_possibilities)
+        receiver_known_trashes = self.get_known_trashes(new_receiver_possibilities)
+
+        new_receiver_identified_plays = [slot for slot in receiver_identified_plays if slot not in old_receiver_identified_plays]
+        new_receiver_known_trashes = [slot for slot in receiver_known_trashes if slot not in old_receiver_known_trashes]
+        if new_receiver_identified_plays or new_receiver_known_trashes:
+            return
+
+        referent = get_referent(old_receiver_unclued, touching)
+        if referent is None:
+            return
+
+        if value in SUIT_CONTENTS:
+            if receiver_was_loaded:
+                if old_receiver_unclued[0] in touching:
+                    self.instructed_trash.append(referent)
+                else:
+                    self.instructed_plays.append(referent)
+            elif not self.instructed_to_lock[receiver] and referent is old_receiver_unclued[0]:
+                self.instructed_chop[receiver] = None
+                self.instructed_to_lock[receiver] = True
+            else:
+                self.instructed_chop[receiver] = referent
+                self.instructed_to_lock[receiver] = False
+        else:
+            self.instructed_plays.append(referent)
+
+    def get_identified_plays(self, hand_possibilities):
+        return [i for i, card_possibilities in enumerate(hand_possibilities) if len(hand_possibilities) == 1 and is_playable(next(iter(hand_possibilities)), self.play_stacks)]
+
+    def get_known_trashes(self, hand_possibilities):
+        return [i for i, card_possibilities in enumerate(hand_possibilities)if self.is_known_trash(card_possibilities)]
+
+    def is_known_trash(self, card_possibilities):
+        return all([not self.useful(identity) for identity in card_possibilities])
+
+    def useful(self, identity):
+        suit = identity[1]
+        rank = int(identity[0])
+        return self.play_stacks[suit] < rank and rank <= self.max_stacks[suit]
+
+def parse_identity(identity):
+    return identity[1], int(identity[0])
+
+def get_referent(old_receiver_unclued, touching):
+    for i, slot in enumerate(old_receiver_unclued):
+        if old_receiver_unclued[(i + 1) % len(old_receiver_unclued)] in touching:
+            return slot
+
+
+def get_unclued(hand_possibilities):
+    return [i for i, card_possibilities in enumerate(hand_possibilities) if not is_clued(card_possibilities)]
+
+def is_clued(card_possibilities):
+    if len(card_possibilities) > 5:
+        return False
+    possible_ranks_per_suit = {}
+    possible_suits_per_rank = {}
+    for possibility in card_possibilities:
+        rank = possibility[0]
+        suit = possibility[1]
+        try:
+            possible_ranks_per_suit[suit].add(rank)
+        except KeyError:
+            possible_ranks_per_suit[suit] = set([rank])
+        try:
+            possible_suits_per_rank[rank].add(suit)
+        except KeyError:
+            possible_suits_per_rank[rank] = set([suit])
+    return all([len(ranks) == 1 for ranks in possible_ranks_per_suit.values()]) or all([len(suits) == 1 for suits in possible_suitss_per_rank.values()])
+
+def get_touching(hand, clue_value):
+    return [i for i, card in enumerate(hand) if clue_value in card["name"]]
 
 def find_sacrifice(r, hand):
     lock_hint = None
@@ -223,133 +316,10 @@ def likelihood_critical(r, card):
     num_critical = len([identity for identity in possible_identities if is_critical(r, identity)])
     return num_critical / len(possible_identities)
 
-def get_unclued(hand, instructed_plays):
-    return [card for card in hand if card["direct"] == [] and card not in instructed_plays]
-
-def get_known_trash(r, hand):
-    return [card for card in hand if is_known_trash(r, card)]
-
-def is_known_trash(r, card):
-    return all([not useful(r, identity) for identity in get_possible_identities(card)])
-
-def get_possible_identities(card):
-    possible_suits = set(VANILLA_SUITS)
-    possible_ranks = set(SUIT_CONTENTS)
-    for positive in card["direct"]:
-        if positive in SUIT_CONTENTS:
-            possible_ranks = set([positive])
-        else:
-            possible_suits = set([positive])
-    for negative in card["indirect"]:
-        try:
-            if negative in SUIT_CONTENTS:
-                    possible_ranks.remove(negative)
-            else:
-                possible_suits.remove(negative)
-        except KeyError:
-            pass
-    return [rank + suit for rank in possible_ranks for suit in possible_suits]
-
-def hypothetically_tempo(hand, hint, instructed_plays, progress):
-    for card in hand:
-        if card in instructed_plays:
-            continue
-        if not is_playable(card, progress):
-            continue
-        if hint in card["direct"]:
-            continue
-        if hint == card["name"][1] and card["name"][0] in card["direct"]:
-            return True
-        if hint == card["name"][0] and card["name"][1] in card["direct"]:
-            return True
-    return False
-
-
 def get_pace(r):
     drawsLeft = len(r.deck) + (r.gameOverTimer + 1 if r.gameOverTimer else r.nPlayers)
     playsLeft = maxScore(r) - sum(r.progress.values())
     return drawsLeft - playsLeft
 
-def maxScore(r):
-    return sum(maxStacks(r).values())
-
-def maxStacks(r):
-    maxDiscards = [3, 2, 2, 2, 1]
-    discards = dict([(suit, [0 for i in range(5)]) for suit in VANILLA_SUITS])
-    maxScore = dict([(suit, 5) for suit in VANILLA_SUITS])
-    for card in r.discardpile:
-        suit = card[1]
-        rank = int(card[0]) - 1
-        if r.progress[suit] > rank:
-            continue
-        discards[suit][rank] += 1
-        if discards[suit][rank] == maxDiscards[rank]:
-            maxScore[suit] = min(maxScore[suit], rank)
-    return maxScore
-
-def is_critical(r, card_name):
-    return is_last_copy(card_name, r) and useful(r, card_name)
-
-def find_tempo(r):
-    partner_idx = (r.whoseTurn + 1) % r.nPlayers
-    partner_hand = newest_to_oldest(r.h[partner_idx].cards)
-    for slot in get_slots_currently_touched(partner_hand):
-        card = partner_hand[slot]
-        if len(set(card["direct"])) == 1 and is_playable(card, r.progress):
-            if card["direct"][0] in SUIT_CONTENTS:
-                return partner_idx, card["name"][1]
-            else:
-                return partner_idx, card["name"][0]
-
-def find_fix(r):
-    partner_idx = (r.whoseTurn + 1) % r.nPlayers
-    partner_hand = newest_to_oldest(r.h[partner_idx].cards)
-    for slot in get_slots_currently_touched(partner_hand):
-        card = partner_hand[slot]
-        if len(set(card["direct"])) == 1 and not useful(r, card["name"]):
-            if card["direct"][0] in SUIT_CONTENTS:
-                return partner_idx, card["name"][1]
-            else:
-                return partner_idx, card["name"][0]
-
-
 def newest_to_oldest(cards):
     return list(reversed(sorted(cards, key = lambda card: card["time"])))
-
-def get_slots_touched(hand, hint_value):
-    return [i for i, card in enumerate(hand) if hint_value in card["direct"]]
-
-def get_slots_hypothetically_touched(hand, hint_value):
-    return [i for i, card in enumerate(hand) if hint_value in card["name"]]
-
-def get_focus(slots_touched):
-    if len(slots_touched) == 0:
-        return None
-    if len(slots_touched) == 1:
-        return slots_touched[0]
-    if slots_touched[0] == 0:
-        return slots_touched[1]
-    return slots_touched[0]
-
-def get_slots_previously_touched(hand, hint_value):
-    return [i for i, card in enumerate(hand) if previously_touched(card, hint_value)]
-
-def get_slots_currently_touched(hand):
-    return [i for i, card in enumerate(hand) if currently_touched(card)]
-
-def previously_touched(card, hint_value):
-    return card["direct"] != [] and card["direct"] != [hint_value]
-
-def currently_touched(card):
-    return card["direct"] != []
-
-def get_referenced_card(hand, focus, previously_touched):
-    slot = (focus - 1 + len(hand)) % len(hand)
-    while slot in previously_touched:
-        slot = (slot - 1 + len(hand)) % len(hand)
-    return hand[slot]
-
-def useful(r, card_name):
-    suit = card_name[1]
-    rank = int(card_name[0])
-    return r.progress[suit] < rank and rank <= maxStacks(r)[suit]

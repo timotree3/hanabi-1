@@ -149,7 +149,7 @@ class Round(object):
         """Drop the card, draw a new one, and update public info."""
         if not card['known']:
             self.cardsLeft.remove(card['name'])
-        card['position'] = hand.cards.index(card)
+        card['position'] = len(hand.cards) - hand.cards.index(card)
         ReplacedIndex = hand.drop(card)
         self.DropIndRecord.append(ReplacedIndex)
         self.discardpile.append(card['name'])
