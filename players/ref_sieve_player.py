@@ -43,21 +43,14 @@ class ReferentialSievePlayer(AIPlayer):
         """Can be overridden to perform logging at the end of the game"""
         pass
 
-# Move selection
-# 1. If there are no clues tokens, skip ahead
-# 2. If my partner's chop is critical and at risk, try to give a clue
-# 3. If I have a known play, play it
-# 4. If there are 8 clues, give an 8 clue stall
-# 5. If I am locked, give a locked hand stall
-# 6. If I have a known trash, discard it
-# 7. Otherwise, discard chop
-
 def find_best_move(hands, player, global_understanding):
     partner = (player + 1) % 2
     current_max_score = global_understanding.max_score_adjusted()
     simulation = deepcopy(global_understanding)
     simulation.make_expected_move(partner, hands[partner])
     baseline_max_score = simulation.max_score_adjusted()
+    baseline_bdrs = sum([global_understanding.usable_copies[identity] - copies for identity, copies in simulation.usable_copies.items() if simulation.useful(identity)])
+    print("baseline_bdrs", baseline_bdrs)
 
     my_identified_plays = global_understanding.get_identified_plays(global_understanding.hand_possibilities[player])
     best_play_slot = None
@@ -85,6 +78,7 @@ def find_best_move(hands, player, global_understanding):
     best_clue_score = 0
     best_clue_strikes = 3
     best_clue_tempo = 0
+    best_clue_bdrs = 100
     if global_understanding.clue_tokens >= 1:
         for clue_value, touching in get_possible_clues(hands[partner]):
             simulation = deepcopy(global_understanding)
@@ -92,24 +86,36 @@ def find_best_move(hands, player, global_understanding):
             simulation.make_expected_move(partner, hands[partner])
             score = simulation.max_score_adjusted()
             tempo = simulation.score() + len(simulation.instructed_plays[partner]) + len(simulation.get_identified_plays(simulation.hand_possibilities[partner]))
-            print('simulated', clue_value, score, simulation.strikes, tempo)
+            bdrs = sum([global_understanding.usable_copies[identity] - copies for identity, copies in simulation.usable_copies.items() if simulation.useful(identity)])
+            print('simulated', clue_value, score, simulation.strikes, tempo, bdrs)
             if score > best_clue_score:
                 best_clue = clue_value
                 best_clue_score = score
                 best_clue_strikes = simulation.strikes
                 best_clue_tempo = tempo
+                best_clue_bdrs = bdrs
             elif score == best_clue_score and simulation.strikes < best_clue_strikes:
                 best_clue = clue_value
                 best_clue_strikes = simulation.strikes
+                best_clue_tempo = tempo
+                best_clue_bdrs = bdrs
             elif score == best_clue_score and simulation.strikes == best_clue_strikes and tempo > best_clue_tempo:
                 best_clue = clue_value
                 best_clue_tempo = tempo
+                best_clue_bdrs = bdrs
+            elif score == best_clue_score and simulation.strikes == best_clue_strikes and tempo == best_clue_tempo and bdrs < best_clue_bdrs:
+                best_clue = clue_value
+                best_clue_bdrs = bdrs
+    print('best_clue', best_clue)
 
     if global_understanding.clue_tokens == 8:
         if best_clue_score > best_play_score:
             return 'hint', (partner, best_clue)
         else:
             return 'play', hands[player][best_play_slot]
+        
+    if global_understanding.clue_tokens >= 4 and (best_clue_score > baseline_max_score or (best_clue_score == baseline_max_score and best_clue_bdrs < baseline_bdrs)):
+        return 'hint', (partner, best_clue)
 
     simulation = deepcopy(global_understanding)
     simulation.clue_tokens += 1
@@ -154,7 +160,7 @@ def get_possible_clues(hand):
         if touching:
             clues.append((rank, touching))
     return clues
- 
+
 
 class GlobalUnderstanding:
     def __init__(self, suits = VANILLA_SUITS, n_players = 2, hand_size = 5):
@@ -163,8 +169,9 @@ class GlobalUnderstanding:
         self.strikes = 0
         self.max_stacks = dict([(suit, 5) for suit in suits])
         self.deck_size = len(suits) * len(SUIT_CONTENTS)
-        self.unseen_copies = dict([(str(rank) + suit, SUIT_CONTENTS.count(str(rank))) for rank in range(1, 6) for suit in suits])
-        self.usable_copies = deepcopy(self.unseen_copies)
+        self.initial_copies = dict([(str(rank) + suit, SUIT_CONTENTS.count(str(rank))) for rank in range(1, 6) for suit in suits])
+        self.unseen_copies = deepcopy(self.initial_copies)
+        self.usable_copies = deepcopy(self.initial_copies)
         self.hand_possibilities = []
         for player in range(n_players):
             self.hand_possibilities.append([])
