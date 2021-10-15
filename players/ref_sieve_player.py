@@ -16,65 +16,134 @@ class ReferentialSievePlayer(AIPlayer):
         super(ReferentialSievePlayer, self).__init__(*args)
 
     def play(self, r):
-        r.HandHistory.append([newest_to_oldest(deepcopy(hand.cards)) if hand.seat != r.whoseTurn else 'redacted' for hand in r.h])
-        recent_actions = r.playHistory[-r.nPlayers]
+        r.HandHistory.append([newest_to_oldest(deepcopy(hand.cards)) for hand in r.h])
+        recent_actions = r.playHistory[-r.nPlayers:]
         if len(recent_actions) < r.nPlayers:
             self.global_understanding = GlobalUnderstanding()
-        initialActor = r.whoseTurn - len(recent_actions)
+        initial_actor = r.whoseTurn - len(recent_actions)
         for i, action in enumerate(recent_actions):
-            actor = (initialActor + i + r.nPlayers) % r.nPlayers
+            actor = (initial_actor + i + r.nPlayers) % r.nPlayers
             action_type, action = action
             if action_type == 'play':
-                self.global_understanding.play(actor, action["name"], action["position"])
+                self.global_understanding.play(actor, action["name"], action["position"] - 1)
             elif action_type == 'discard':
-                self.global_understanding.discard(actor, action["name"], action["position"])
+                self.global_understanding.discard(actor, action["name"], action["position"] - 1)
             elif action_type == 'hint':
                 receiver, value = action
                 hands_at_time = r.HandHistory[-len(recent_actions) + i]
                 touching = get_touching(hands_at_time[receiver], value)
                 self.global_understanding.clue(receiver, value, touching)
 
-
-        return find_best_move(r.HandHistory[-1], r.whoseTurn, self.global_understanding)
+        best_move = find_best_move(r.HandHistory[-1], r.whoseTurn, self.global_understanding)
+        print('best_move', best_move)
+        return best_move
 
 
     def end_game_logging(self):
         """Can be overridden to perform logging at the end of the game"""
         pass
 
+# Move selection
+# 1. If there are no clues tokens, skip ahead
+# 2. If my partner's chop is critical and at risk, try to give a clue
+# 3. If I have a known play, play it
+# 4. If there are 8 clues, give an 8 clue stall
+# 5. If I am locked, give a locked hand stall
+# 6. If I have a known trash, discard it
+# 7. Otherwise, discard chop
+
 def find_best_move(hands, player, global_understanding):
-    if global_understanding.clue_tokens > 0:
-        for clue in get_possible_clues(hands, player):
-            simulated_hands = deepcopy(hands)
-            simulation = deepcopy(global_understanding)
-            simulation.clue(*clue)
-            for player_offset in range(1, len(hands)):
-                actor = (player + player_offset) % len(hands)
-                action_type, action = get_expected_action(player, simulation)
-                old_deck_size = simulation.deck_size
-                if action_type == 'play':
-                    slot = action
-                    simulation.play(actor, simulated_hands[actor][slot], slot)
-                    simulated_hands[actor].pop(slot)
-                    if old_deck_size > 0:
-                        simulated_hands[actor] = [set(simulation.unseen_copies.keys())] + simulated_hands[actor]
-                elif action_type == 'discard':
-                    slot = action
-                    simulation.discard(actor, simulated_hands[actor][slot], slot)
-                    simulated_hands[actor].pop(slot)
-                    if old_deck_size > 0:
-                        simulated_hands[actor] = [set(simulation.unseen_copies.keys())] + simulated_hands[actor]
-                else:
-                    raise "todo"
+    partner = (player + 1) % 2
+    current_max_score = sum(global_understanding.max_stacks.values())
+    simulation = deepcopy(global_understanding)
+    simulation.make_expected_move(partner, hands[partner])
+    baseline_max_score = sum(simulation.max_stacks.values())
 
+    my_identified_plays = global_understanding.get_identified_plays(global_understanding.hand_possibilities[player])
+    best_play_slot = None
+    best_play_score = 0
+    for slot, identity in my_identified_plays:
+        simulation = deepcopy(global_understanding)
+        simulation.play(player, identity, slot)
+        simulation.make_expected_move(partner, hands[partner])
+        score = sum(simulation.max_stacks.values())
+        if score == current_max_score:
+            return 'play', hands[player][slot]
+        if score > best_play_score:
+            best_play_slot = slot
+            best_play_score = score
+    
+    print('instructed_plays', global_understanding.instructed_plays)
+    if global_understanding.instructed_plays[player] and current_max_score == baseline_max_score:
+        slot = global_understanding.instructed_plays[player][0]
+        return 'play', hands[player][slot]
+    
+    if global_understanding.clue_tokens == 8:
+        return 'hint', (partner, find_best_clue(hands, player, global_understanding))
 
+    simulation = deepcopy(global_understanding)
+    simulation.clue_tokens += 1
+    simulation.make_expected_move(partner, hands[partner])
+    discard_score = sum(simulation.max_stacks.values())
+    best_discard = None
 
+    if global_understanding.instructed_trash[player]:
+        best_discard = global_understanding.instructed_trash[player][0]
+    else:
+        known_trashes = global_understanding.get_known_trashes(global_understanding.hand_possibilities[player])
+        if known_trashes:
+            best_discard = known_trashes[0]
+        elif global_understanding.instructed_chop[player] != None:
+            best_discard = global_understanding.instructed_chop[player]
+        else:
+            unclued = get_unclued(global_understanding.hand_possibilities[player])
+            best_discard = unclued[0]
+            if global_understanding.instructed_to_lock[player]:
+                discard_score = 0
 
+    if discard_score == current_max_score:
+        return 'discard', hands[player][best_discard]
+    
+    if global_understanding.clue_tokens == 0:
+        if best_play_slot != None:
+            return 'play', hands[player][best_play_slot]
+        else:
+            return 'discard', hands[player][best_discard]
 
-def get_expected_action(player, global_understanding):
+    return 'hint', (partner, find_best_clue(hands, player, global_understanding))
 
+def find_best_clue(hands, player, global_understanding):
+    partner = (player + 1) % 2
+    best_clue = None
+    best_clue_score = 0
+    best_clue_strikes = 3
+    for clue_value, touching in get_possible_clues(hands[partner]):
+        simulation = deepcopy(global_understanding)
+        simulation.clue(partner, clue_value, touching)
+        simulation.make_expected_move(partner, hands[partner])
+        score = sum(simulation.max_stacks.values())
+        if score > best_clue_score:
+            best_clue = clue_value
+            best_clue_score = score
+            best_clue_strikes = simulation.strikes
+        elif score == best_clue_score and simulation.strikes < best_clue_strikes:
+            best_clue = clue_value
+            best_clue_strikes = simulation.strikes
+    return best_clue
 
-
+def get_possible_clues(hand):
+    clues = []
+    for suit in VANILLA_SUITS:
+        touching = get_touching(hand, suit)
+        if touching:
+            clues.append((suit, touching))
+    for rank_int in range(1, 6):
+        rank = str(rank_int)
+        touching = get_touching(hand, rank)
+        if touching:
+            clues.append((rank, touching))
+    return clues
+ 
 
 class GlobalUnderstanding:
     def __init__(self, suits = VANILLA_SUITS, n_players = 2, hand_size = 5):
@@ -82,7 +151,7 @@ class GlobalUnderstanding:
         self.play_stacks = dict([(suit, 0) for suit in suits])
         self.strikes = 0
         self.max_stacks = dict([(suit, 5) for suit in suits])
-        self.deck_size = len(suits) * SUIT_CONTENTS
+        self.deck_size = len(suits) * len(SUIT_CONTENTS)
         self.unseen_copies = dict([(str(rank) + suit, SUIT_CONTENTS.count(str(rank))) for rank in range(1, 6) for suit in suits])
         self.usable_copies = deepcopy(self.unseen_copies)
         self.hand_possibilities = []
@@ -98,12 +167,12 @@ class GlobalUnderstanding:
 
     def draw(self, player, replacing = None):
         if replacing is not None:
-            for i, slot in reversed(enumerate(self.instructed_plays[player])):
+            for i, slot in reversed(list(enumerate(self.instructed_plays[player]))):
                 if slot < replacing:
                     self.instructed_plays[player][i] += 1
                 elif slot == replacing:
-                    self.instructed_plays.pop(i)
-            for i, slot in reversed(enumerate(self.instructed_trash[player])):
+                    self.instructed_plays[player].pop(i)
+            for i, slot in reversed(list(enumerate(self.instructed_trash[player]))):
                 if slot < replacing:
                     self.instructed_trash[player][i] += 1
                 elif slot == replacing:
@@ -153,6 +222,8 @@ class GlobalUnderstanding:
 
         if self.play_stacks[suit] == rank - 1:
             self.play_stacks[suit] = rank
+            if rank == 5:
+                self.clue_tokens += 1
         else:
             self.strikes += 1
             if self.strikes >= 3:
@@ -175,13 +246,12 @@ class GlobalUnderstanding:
         self.instructed_to_lock[player] = False
 
     def discard(self, player, identity, slot):
-        suit, rank = parse_identity(identity)
-
         self.interpret_discard(player, identity, slot)
 
         self.draw(player, replacing = slot)
         self.reveal_copy(identity)
         self.discard_copy(identity)
+        self.clue_tokens += 1
 
     def interpret_discard(self, player, identity, slot):
         self.instructed_chop[player] = None
@@ -195,7 +265,7 @@ class GlobalUnderstanding:
         # Bug?: old_receiver_possibilities doesn't account for newly revealed knowledge in giver's hand
         self.interpret_clue(receiver, old_receiver_possibilities, value, touching)
 
-        self.hints -= 1
+        self.clue_tokens -= 1
 
     def apply_information(self, hand_possibilities, value, touching):
         for slot, card_possibilities in enumerate(hand_possibilities):
@@ -218,10 +288,10 @@ class GlobalUnderstanding:
         old_receiver_unclued = get_unclued(old_receiver_possibilities)
         old_receiver_unclued = [slot for slot in old_receiver_unclued if slot not in self.instructed_plays[receiver] and slot not in self.instructed_trash[receiver]]
 
-        receiver_identified_plays = self.get_identified_plays(new_receiver_possibilities)
-        receiver_known_trashes = self.get_known_trashes(new_receiver_possibilities)
+        receiver_identified_plays = self.get_identified_plays(self.hand_possibilities[receiver])
+        receiver_known_trashes = self.get_known_trashes(self.hand_possibilities[receiver])
 
-        new_receiver_identified_plays = [slot for slot in receiver_identified_plays if slot not in old_receiver_identified_plays]
+        new_receiver_identified_plays = [play for play in receiver_identified_plays if play not in old_receiver_identified_plays]
         new_receiver_known_trashes = [slot for slot in receiver_known_trashes if slot not in old_receiver_known_trashes]
         if new_receiver_identified_plays or new_receiver_known_trashes:
             return
@@ -233,9 +303,9 @@ class GlobalUnderstanding:
         if value in SUIT_CONTENTS:
             if receiver_was_loaded:
                 if old_receiver_unclued[0] in touching:
-                    self.instructed_trash.append(referent)
+                    self.instructed_trash[receiver].append(referent)
                 else:
-                    self.instructed_plays.append(referent)
+                    self.instructed_plays[receiver].append(referent)
             elif not self.instructed_to_lock[receiver] and referent is old_receiver_unclued[0]:
                 self.instructed_chop[receiver] = None
                 self.instructed_to_lock[receiver] = True
@@ -243,13 +313,54 @@ class GlobalUnderstanding:
                 self.instructed_chop[receiver] = referent
                 self.instructed_to_lock[receiver] = False
         else:
-            self.instructed_plays.append(referent)
+            self.instructed_plays[receiver].append(referent)
+
+    def make_expected_move(self, player, hand):
+        identified_plays = self.get_identified_plays(self.hand_possibilities[player])
+        if identified_plays:
+            slot, identity = identified_plays[0]
+            self.play(player, identity, slot)
+            return
+        if self.instructed_plays[player]:
+            slot = self.instructed_plays[player][0]
+            identity = hand[slot]["name"]
+            self.play(player, identity, slot)
+            return
+        if self.clue_tokens == 8:
+            self.clue_tokens -= 1
+            return
+        if self.instructed_trash[player]:
+            slot = self.instructed_trash[player][0]
+            identity = hand[slot]["name"]
+            self.discard(player, identity, slot)
+            return
+        known_trashes = self.get_known_trashes(self.hand_possibilities[player])
+        if known_trashes:
+            slot = known_trashes[0]
+            identity = hand[slot]["name"]
+            self.discard(player, identity, slot)
+            return
+        if self.instructed_chop[player] != None:
+            identity = hand[self.instructed_chop[player]]["name"]
+            self.discard(player, identity, self.instructed_chop[player])
+            return
+        if self.instructed_to_lock and self.clue_tokens > 0:
+            self.clue_tokens -= 1
+            return
+        unclued = get_unclued(self.hand_possibilities[player])
+        if unclued:
+            chop = unclued[0]
+            identity = hand[chop]["name"]
+            self.discard(player, identity, chop)
+            return
+        self.discard(player, hand[0]["name"], 0)
+            
 
     def get_identified_plays(self, hand_possibilities):
-        return [i for i, card_possibilities in enumerate(hand_possibilities) if len(hand_possibilities) == 1 and is_playable(next(iter(hand_possibilities)), self.play_stacks)]
+        return [(i, next(iter(card_possibilities))) for i, card_possibilities in enumerate(hand_possibilities) if len(card_possibilities) == 1 and is_playable(next(iter(card_possibilities)), self.play_stacks)]
 
     def get_known_trashes(self, hand_possibilities):
-        return [i for i, card_possibilities in enumerate(hand_possibilities)if self.is_known_trash(card_possibilities)]
+        return [i for i, card_possibilities in enumerate(hand_possibilities) if self.is_known_trash(card_possibilities)]
 
     def is_known_trash(self, card_possibilities):
         return all([not self.useful(identity) for identity in card_possibilities])
@@ -287,39 +398,16 @@ def is_clued(card_possibilities):
             possible_suits_per_rank[rank].add(suit)
         except KeyError:
             possible_suits_per_rank[rank] = set([suit])
-    return all([len(ranks) == 1 for ranks in possible_ranks_per_suit.values()]) or all([len(suits) == 1 for suits in possible_suitss_per_rank.values()])
+    return all([len(ranks) == 1 for ranks in possible_ranks_per_suit.values()]) or all([len(suits) == 1 for suits in possible_suits_per_rank.values()])
 
 def get_touching(hand, clue_value):
     return [i for i, card in enumerate(hand) if clue_value in card["name"]]
 
-def find_sacrifice(r, hand):
-    lock_hint = None
-    for move_type, move in reversed(r.playHistory):
-        if move_type != 'hint':
-            continue
-        receiver, hint = move
-        if receiver != r.whoseTurn:
-            continue
-        lock_hint = hint
-        break
-    slots_previously_touched = get_slots_previously_touched(hand, lock_hint)
-    previously_touched = [hand[slot] for slot in slots_previously_touched]
-    if previously_touched:
-        return least_critical(r, previously_touched)
-    return least_critical(r, hand)
+def filter_touched(card_possibilities, clue_value):
+    return [identity for identity in card_possibilities if clue_value in identity]
 
-def least_critical(r, cards):
-    return min(cards, key=lambda card: likelihood_critical(r, card))
-
-def likelihood_critical(r, card):
-    possible_identities = get_possible_identities(card)
-    num_critical = len([identity for identity in possible_identities if is_critical(r, identity)])
-    return num_critical / len(possible_identities)
-
-def get_pace(r):
-    drawsLeft = len(r.deck) + (r.gameOverTimer + 1 if r.gameOverTimer else r.nPlayers)
-    playsLeft = maxScore(r) - sum(r.progress.values())
-    return drawsLeft - playsLeft
+def filter_untouched(card_possibilities, clue_value):
+    return [identity for identity in card_possibilities if clue_value not in identity]
 
 def newest_to_oldest(cards):
     return list(reversed(sorted(cards, key = lambda card: card["time"])))
