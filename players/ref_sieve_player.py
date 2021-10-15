@@ -76,26 +76,34 @@ def find_best_move(hands, player, global_understanding):
         best_play_slot = global_understanding.instructed_plays[player][0]
         best_play_score = baseline_max_score
 
+    print('best_play', best_play_slot, best_play_score)
+
     if best_play_score == current_max_score:
         return 'play', hands[player][best_play_slot]
 
     best_clue = None
     best_clue_score = 0
     best_clue_strikes = 3
+    best_clue_tempo = 0
     if global_understanding.clue_tokens >= 1:
         for clue_value, touching in get_possible_clues(hands[partner]):
             simulation = deepcopy(global_understanding)
             simulation.clue(partner, clue_value, touching)
             simulation.make_expected_move(partner, hands[partner])
             score = simulation.max_score_adjusted()
-            print('simulated', clue_value, score)
+            tempo = simulation.score() + len(simulation.instructed_plays[partner]) + len(simulation.get_identified_plays(simulation.hand_possibilities[partner]))
+            print('simulated', clue_value, score, simulation.strikes, tempo)
             if score > best_clue_score:
                 best_clue = clue_value
                 best_clue_score = score
                 best_clue_strikes = simulation.strikes
+                best_clue_tempo = tempo
             elif score == best_clue_score and simulation.strikes < best_clue_strikes:
                 best_clue = clue_value
                 best_clue_strikes = simulation.strikes
+            elif score == best_clue_score and simulation.strikes == best_clue_strikes and tempo > best_clue_tempo:
+                best_clue = clue_value
+                best_clue_tempo = tempo
 
     if global_understanding.clue_tokens == 8:
         if best_clue_score > best_play_score:
@@ -128,6 +136,9 @@ def find_best_move(hands, player, global_understanding):
 
     if best_clue_score > discard_score:
         return 'hint', (partner, best_clue)
+
+    if best_play_score > discard_score:
+        return 'play', hands[player][best_play_slot]
 
     return 'discard', hands[player][best_discard]
 
