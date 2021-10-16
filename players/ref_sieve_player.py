@@ -130,6 +130,9 @@ def find_best_move(hands, player, global_understanding):
 
         score = simulation.max_score_adjusted(player, player, simulated_hand)
 
+        if simulation.clue_tokens < clue_tokens_before_playing and simulation.deck_size >= 1 and simulation.get_pace_adjusted(player, player, simulated_hand) <= 0 and best_play_slot == None and not any([is_playable(card["name"], global_understanding.play_stacks) for card in hands[partner]]):
+            score -= 1
+
         if clue_tokens_before_playing >= 1 and simulation.score() > score_before_playing and score < baseline_max_score and score <= best_play_score and not simulation.holds_final_round_card(partner):
             score = baseline_max_score
 
@@ -518,7 +521,7 @@ class GlobalUnderstanding:
                 self.turns_left -= 1
             self.clue_tokens -= 1
             return
-        if self.clue_tokens >= 1 and self.get_pace_adjusted(player, (player + 1) % 2, hand) <= 0 and (self.instructed_plays[(player + 1) % 2] or self.get_good_touch_plays_for_player((player + 1) % 2)):
+        if self.clue_tokens >= 1 and self.get_pace_adjusted(player, (player + 1) % 2, hand) <= 0:
             if self.turns_left != None:
                 self.turns_left -= 1
             self.clue_tokens -= 1
