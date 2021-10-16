@@ -254,7 +254,6 @@ class GlobalUnderstanding:
                 self.instructed_plays[player][i] -= 1
             for i in range(len(self.instructed_trash[player])):
                 self.instructed_trash[player][i] -= 1
-            self.turns_left -= 1
         else:
             self.deck_size -= 1
             new_card_possibilities = set(
@@ -300,7 +299,7 @@ class GlobalUnderstanding:
         self.max_stacks[suit] = min(rank - 1, self.max_stacks[suit])
 
     def play(self, player, identity, slot):
-        # print('play', player, identity, slot)
+        print('play', player, identity, slot)
         suit, rank = parse_identity(identity)
 
         if self.play_stacks[suit] == rank - 1:
@@ -317,6 +316,9 @@ class GlobalUnderstanding:
 
         possibilities = self.hand_possibilities[player][slot]
 
+        if self.turns_left != None:
+            self.turns_left -= 1
+
         self.interpret_play(player, identity, slot)
 
         self.draw(player, replacing=slot)
@@ -330,7 +332,11 @@ class GlobalUnderstanding:
         self.instructed_to_lock[player] = False
 
     def discard(self, player, identity, slot):
-        # print('discard', player, identity, slot)
+        print('discard', player, identity, slot)
+
+        if self.turns_left != None:
+            self.turns_left -= 1
+
         self.interpret_discard(player, identity, slot)
 
         self.draw(player, replacing=slot)
@@ -348,6 +354,9 @@ class GlobalUnderstanding:
         old_receiver_touched = deepcopy(self.touched[receiver])
 
         self.apply_information(receiver, value, touching)
+
+        if self.turns_left != None:
+            self.turns_left -= 1
 
         # Bug?: old_receiver_possibilities doesn't account for newly revealed knowledge in giver's hand
         self.interpret_clue(receiver, old_receiver_possibilities,
@@ -431,6 +440,7 @@ class GlobalUnderstanding:
             self.instructed_plays[receiver].append(referent)
 
     def make_expected_move(self, player, hand):
+        print('make_expected_move', self.turns_left)
         if self.turns_left == 0:
             return
         good_touch_plays = self.get_good_touch_plays_for_player(player)
@@ -447,7 +457,7 @@ class GlobalUnderstanding:
         if self.clue_tokens == 8:
             self.clue_tokens -= 1
             return
-        if self.get_pace_adjusted(player) <= 0:
+        if self.clue_tokens >= 1 and self.get_pace_adjusted(player) <= 0:
             self.clue_tokens -= 1
             return
         if self.instructed_trash[player]:
@@ -519,6 +529,8 @@ class GlobalUnderstanding:
         return sum(self.max_stacks.values())
 
     def max_score_adjusted(self, current_player):
+        if self.turns_left == 0:
+            return self.score()
         pace = self.get_pace_adjusted(current_player)
         if pace < 0:
             return self.max_score() + pace
