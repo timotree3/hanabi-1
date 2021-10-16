@@ -49,37 +49,53 @@ def find_best_move(hands, player, global_understanding):
     simulation = deepcopy(global_understanding)
     simulation.make_expected_move(partner, hands[partner])
     baseline_max_score = simulation.max_score_adjusted(player)
+    baseline_strikes = simulation.strikes
     baseline_bdrs = sum([global_understanding.usable_copies[identity] - copies for identity, copies in simulation.usable_copies.items() if simulation.useful(identity)])
     baseline_locked = simulation.instructed_to_lock[partner]
 
-    my_identified_plays = global_understanding.get_identified_plays(global_understanding.hand_possibilities[player])
     best_play_slot = None
     best_play_score = 0
+    best_play_strikes = 3
     best_play_locked = True
-    best_play_bdrs = 100
-    for slot, identity in my_identified_plays:
+    best_play_bdrs = 100    
+    for slot, card_possibilities in global_understanding.get_good_touch_plays_for_player(player):
         simulation = deepcopy(global_understanding)
-        simulation.play(player, identity, slot)
-        simulation.make_expected_move(partner, hands[partner])
-        score = simulation.max_score_adjusted(player)
-        locked = simulation.instructed_to_lock[partner]
-        bdrs = sum([global_understanding.usable_copies[identity] - copies for identity, copies in simulation.usable_copies.items() if simulation.useful(identity)])
-        if score < best_play_score:
-            continue
-        if score == best_play_score:
-            if locked and not best_play_locked:
+        if len(card_possibilities) == 1:
+            identity = next(iter(card_possibilities))
+            simulation.play(player, identity, slot)
+            simulation.make_expected_move(partner, hands[partner])
+            score = simulation.max_score_adjusted(player)
+            locked = simulation.instructed_to_lock[partner]
+            bdrs = sum([global_understanding.usable_copies[identity] - copies for identity, copies in simulation.usable_copies.items() if simulation.useful(identity)])
+            print('play simulation', identity, score, locked, bdrs, simulation.play_stacks)
+            if score < best_play_score:
                 continue
-            if locked == best_play_locked and bdrs >= best_play_bdrs:
-                continue
-        best_play_slot = slot
-        best_play_score = score
-        best_play_locked = locked
-        best_play_bdrs = bdrs
+            if score == best_play_score:
+                if simulation.strikes > best_play_strikes:
+                    continue
+                if simulation.strikes == best_play_strikes:
+                    if locked and not best_play_locked:
+                        continue
+                    if locked == best_play_locked and bdrs >= best_play_bdrs:
+                        continue
+            best_play_slot = slot
+            best_play_score = score
+            best_play_strikes = simulation.strikes
+            best_play_locked = locked
+            best_play_bdrs = bdrs
+        elif best_play_slot == None:
+            best_play_slot = slot
+            best_play_score = baseline_max_score
+            best_play_strikes = baseline_strikes
+            best_play_locked = baseline_locked
+            best_play_bdrs = baseline_bdrs
+
     
     if best_play_slot == None and global_understanding.instructed_plays[player]:
         # print('including instructed play')
         best_play_slot = global_understanding.instructed_plays[player][0]
         best_play_score = baseline_max_score
+        best_play_strikes = simulation.strikes
         best_play_locked = baseline_locked
         best_play_bdrs = baseline_bdrs
 
@@ -97,7 +113,7 @@ def find_best_move(hands, player, global_understanding):
             simulation.clue(partner, clue_value, touching)
             simulation.make_expected_move(partner, hands[partner])
             score = simulation.max_score_adjusted(player)
-            tempo = simulation.score() + len(simulation.instructed_plays[partner]) + len(simulation.get_identified_plays(simulation.hand_possibilities[partner]))
+            tempo = simulation.score() + len(simulation.instructed_plays[partner]) + len(simulation.get_good_touch_plays_for_player(partner))
             bdrs = sum([global_understanding.usable_copies[identity] - copies for identity, copies in simulation.usable_copies.items() if simulation.useful(identity)])
             locked = simulation.instructed_to_lock[partner]
             simulated_current_score = simulation.score()
@@ -176,18 +192,20 @@ def find_best_move(hands, player, global_understanding):
     simulation.discard(player, discard_identity, best_discard)
     simulation.make_expected_move(partner, hands[partner])
     discard_score = simulation.max_score_adjusted(player)
+    discard_strikes = simulation.strikes
     # print('best_discard', best_discard, discard_score)
-    
-    if best_play_slot != None and best_play_score >= best_clue_score and best_play_score >= discard_score:
-        return 'play', hands[player][best_play_slot]
 
-    if best_clue != None and best_clue_score > discard_score:
+    maximum = max((best_play_score, -best_play_strikes, 'play'), (discard_score, -discard_strikes, 'discard'), (best_clue_score, -best_clue_strikes, 'clue'))#, key=lambda move: (move[1], move[2])#(move[1] * 4) - move[2])
+    print('maximum', maximum)
+    _, _, move = maximum
+    print('move', move)
+    if move == 'play':
+        return 'play', hands[player][best_play_slot]
+    if move == 'discard':
+        return 'discard', hands[player][best_discard]
+    if move == 'clue':
         return 'hint', (partner, best_clue)
 
-    if best_play_slot != None and best_play_score >= discard_score:
-        return 'play', hands[player][best_play_slot]
-
-    return 'discard', hands[player][best_discard]
 
 def get_possible_clues(hand):
     clues = []
@@ -214,8 +232,10 @@ class GlobalUnderstanding:
         self.unseen_copies = deepcopy(self.initial_copies)
         self.usable_copies = deepcopy(self.initial_copies)
         self.hand_possibilities = []
+        self.touched = []
         for player in range(n_players):
             self.hand_possibilities.append([])
+            self.touched.append([])
             for card in range(hand_size):
                 self.draw(player)
         self.instructed_plays = [[] for player in range(n_players)]
@@ -240,6 +260,7 @@ class GlobalUnderstanding:
             self.instructed_to_lock[player] = False
 
             self.hand_possibilities[player].pop(replacing)
+            self.touched[player].pop(replacing)
         if self.deck_size == 0:
             for i in range(len(self.instructed_plays[player])):
                 self.instructed_plays[player][i] -= 1
@@ -248,8 +269,9 @@ class GlobalUnderstanding:
             self.turns_left -= 1
         else:
             self.deck_size -= 1
-            new_card = set([identity for identity, copies in self.unseen_copies.items() if copies > 0])
-            self.hand_possibilities[player] = [new_card] + self.hand_possibilities[player]
+            new_card_possibilities = set([identity for identity, copies in self.unseen_copies.items() if copies > 0])
+            self.hand_possibilities[player] = [new_card_possibilities] + self.hand_possibilities[player]
+            self.touched[player] = [False] + self.touched[player]
             if self.deck_size == 0:
                 self.turns_left = len(self.hand_possibilities)
         
@@ -320,7 +342,7 @@ class GlobalUnderstanding:
         self.instructed_to_lock[player] = False
 
     def discard(self, player, identity, slot):
-        # print('discard', player, identity, slot)
+        print('discard', player, identity, slot)
         self.interpret_discard(player, identity, slot)
 
         self.draw(player, replacing = slot)
@@ -334,11 +356,12 @@ class GlobalUnderstanding:
 
     def clue(self, receiver, value, touching):
         old_receiver_possibilities = deepcopy(self.hand_possibilities[receiver])
+        old_receiver_touched = deepcopy(self.touched[receiver])
 
         self.apply_information(receiver, value, touching)
 
         # Bug?: old_receiver_possibilities doesn't account for newly revealed knowledge in giver's hand
-        self.interpret_clue(receiver, old_receiver_possibilities, value, touching)
+        self.interpret_clue(receiver, old_receiver_possibilities, old_receiver_touched, value, touching)
 
         self.clue_tokens -= 1
 
@@ -350,34 +373,36 @@ class GlobalUnderstanding:
 
             if slot in touching:
                 self.hand_possibilities[receiver][slot] = filter_touched(card_possibilities, value)
+                self.touched[receiver][slot] = True
             else:
                 self.hand_possibilities[receiver][slot] = filter_untouched(card_possibilities, value)
 
             if len(card_possibilities) == 1:
                 self.reveal_copy(next(iter(card_possibilities)))
 
-    def interpret_clue(self, receiver, old_receiver_possibilities, value, touching):
-        old_receiver_identified_plays = self.get_identified_plays(old_receiver_possibilities)
+    def interpret_clue(self, receiver, old_receiver_possibilities, old_receiver_touched, value, touching):
+        old_receiver_identified_plays = self.get_good_touch_plays(old_receiver_possibilities, old_receiver_touched)
         old_receiver_known_trashes = self.get_known_trashes(old_receiver_possibilities)
         receiver_was_loaded = old_receiver_identified_plays or old_receiver_known_trashes or self.instructed_plays[receiver] or self.instructed_trash[receiver]
 
         old_receiver_unclued = get_unclued(old_receiver_possibilities)
         old_receiver_unclued = [slot for slot in old_receiver_unclued if slot not in self.instructed_plays[receiver] and slot not in self.instructed_trash[receiver]]
 
-        receiver_identified_plays = self.get_identified_plays(self.hand_possibilities[receiver])
+        receiver_identified_plays = self.get_good_touch_plays_for_player(receiver)
         receiver_known_trashes = self.get_known_trashes(self.hand_possibilities[receiver])
 
-        new_receiver_identified_plays = [play for play in receiver_identified_plays if play not in old_receiver_identified_plays and play not in old_receiver_unclued]
+        new_receiver_identified_plays = [play for play, card_possibilities in receiver_identified_plays if play not in old_receiver_identified_plays and play not in old_receiver_unclued]
         new_receiver_known_trashes = [slot for slot in receiver_known_trashes if slot not in old_receiver_known_trashes and slot not in old_receiver_unclued]
         if new_receiver_identified_plays or new_receiver_known_trashes:
-            print('new_receiver_known_trashes', new_receiver_known_trashes)
             return
 
         referent = get_referent(old_receiver_unclued, touching)
         if referent is None:
             return
 
-        if value in SUIT_CONTENTS:
+        all_trash = all([slot in receiver_known_trashes for slot in touching])
+
+        if value in SUIT_CONTENTS and not all_trash:
             if receiver_was_loaded:
                 if old_receiver_unclued[0] in touching:
                     self.instructed_trash[receiver].append(referent)
@@ -395,9 +420,10 @@ class GlobalUnderstanding:
     def make_expected_move(self, player, hand):
         if self.turns_left == 0:
             return
-        identified_plays = self.get_identified_plays(self.hand_possibilities[player])
-        if identified_plays:
-            slot, identity = identified_plays[0]
+        good_touch_plays = self.get_good_touch_plays_for_player(player)
+        if good_touch_plays:
+            slot, good_touch_identities = good_touch_plays[0]
+            identity = hand[slot]["name"]
             self.play(player, identity, slot)
             return
         if self.instructed_plays[player]:
@@ -436,8 +462,11 @@ class GlobalUnderstanding:
         self.discard(player, hand[0]["name"], 0)
             
 
-    def get_identified_plays(self, hand_possibilities):
-        return [(i, next(iter(card_possibilities))) for i, card_possibilities in enumerate(hand_possibilities) if len(card_possibilities) == 1 and is_playable(next(iter(card_possibilities)), self.play_stacks)]
+    def get_good_touch_plays(self, hand_possibilities, touched):
+        return [(slot, [identity for identity in card_possibilities if not touched[slot] or self.useful(identity)]) for slot, card_possibilities in enumerate(hand_possibilities) if len([identity for identity in card_possibilities if not touched[slot] or self.useful(identity)]) > 0 and all([is_playable(identity, self.play_stacks) for identity in card_possibilities if not touched[slot] or self.useful(identity)])]
+
+    def get_good_touch_plays_for_player(self, player):
+        return self.get_good_touch_plays(self.hand_possibilities[player], self.touched[player])
 
     def get_known_trashes(self, hand_possibilities):
         return [i for i, card_possibilities in enumerate(hand_possibilities) if self.is_known_trash(card_possibilities)]
@@ -464,7 +493,7 @@ class GlobalUnderstanding:
         return self.max_score()
 
     def holds_final_round_card(self, player):
-        return any([all([self.is_final_round_card(identity) for identity in card_possibilities]) for card_possibilities in self.hand_possibilities[player]])
+        return any([any([self.useful(identity) for identity in card_possibilities]) and all([self.is_final_round_card(identity) for identity in card_possibilities if not self.touched[player][slot] or self.useful(identity)]) for slot, card_possibilities in enumerate(self.hand_possibilities[player])])
 
     def is_final_round_card(self, identity):
         suit, rank = parse_identity(identity)
