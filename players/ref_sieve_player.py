@@ -45,10 +45,10 @@ class ReferentialSievePlayer(AIPlayer):
 
 def find_best_move(hands, player, global_understanding):
     partner = (player + 1) % 2
-    current_max_score = global_understanding.max_score_adjusted()
+    current_max_score = global_understanding.max_score_adjusted(player)
     simulation = deepcopy(global_understanding)
     simulation.make_expected_move(partner, hands[partner])
-    baseline_max_score = simulation.max_score_adjusted()
+    baseline_max_score = simulation.max_score_adjusted(player)
     baseline_bdrs = sum([global_understanding.usable_copies[identity] - copies for identity, copies in simulation.usable_copies.items() if simulation.useful(identity)])
     baseline_locked = simulation.instructed_to_lock[partner]
 
@@ -61,7 +61,7 @@ def find_best_move(hands, player, global_understanding):
         simulation = deepcopy(global_understanding)
         simulation.play(player, identity, slot)
         simulation.make_expected_move(partner, hands[partner])
-        score = simulation.max_score_adjusted()
+        score = simulation.max_score_adjusted(player)
         locked = simulation.instructed_to_lock[partner]
         bdrs = sum([global_understanding.usable_copies[identity] - copies for identity, copies in simulation.usable_copies.items() if simulation.useful(identity)])
         if score < best_play_score:
@@ -96,19 +96,20 @@ def find_best_move(hands, player, global_understanding):
             simulation = deepcopy(global_understanding)
             simulation.clue(partner, clue_value, touching)
             simulation.make_expected_move(partner, hands[partner])
-            while simulation.instructed_plays[partner] or simulation.get_identified_plays(simulation.hand_possibilities[partner]):
-                simulation.make_expected_move(partner, hands[partner])
-            score = simulation.max_score_adjusted()
+            score = simulation.max_score_adjusted(player)
             tempo = simulation.score() + len(simulation.instructed_plays[partner]) + len(simulation.get_identified_plays(simulation.hand_possibilities[partner]))
             bdrs = sum([global_understanding.usable_copies[identity] - copies for identity, copies in simulation.usable_copies.items() if simulation.useful(identity)])
             locked = simulation.instructed_to_lock[partner]
-            print('simulated', clue_value, score, simulation.strikes, tempo, bdrs, locked)
+            while simulation.instructed_plays[partner] or simulation.get_identified_plays(simulation.hand_possibilities[partner]):
+                simulation.make_expected_move(partner, hands[partner])
+            strikes = simulation.strikes
+            print('simulated', clue_value, score, strikes, tempo, bdrs, locked)
             if score < best_clue_score:
                 continue
             if score == best_clue_score:
-                if simulation.strikes > best_clue_strikes:
+                if strikes > best_clue_strikes:
                     continue
-                if simulation.strikes == best_clue_strikes:
+                if strikes == best_clue_strikes:
                     if tempo < best_clue_tempo:
                         continue
                     if tempo == best_clue_tempo:
@@ -119,7 +120,7 @@ def find_best_move(hands, player, global_understanding):
             
             best_clue = clue_value
             best_clue_score = score
-            best_clue_strikes = simulation.strikes
+            best_clue_strikes = strikes
             best_clue_tempo = tempo
             best_clue_bdrs = bdrs
             best_clue_locked = locked
@@ -147,10 +148,6 @@ def find_best_move(hands, player, global_understanding):
     if global_understanding.clue_tokens >= 4 and (best_clue_score > baseline_max_score or (best_clue_score == baseline_max_score and best_clue_bdrs < baseline_bdrs)):
         return 'hint', (partner, best_clue)
 
-    simulation = deepcopy(global_understanding)
-    simulation.clue_tokens += 1
-    simulation.make_expected_move(partner, hands[partner])
-    discard_score = simulation.max_score_adjusted()
     best_discard = None
 
     if global_understanding.instructed_trash[player]:
@@ -169,6 +166,11 @@ def find_best_move(hands, player, global_understanding):
                 best_discard = unclued[0]
             else:
                 best_discard = 0
+
+    simulation = deepcopy(global_understanding)
+    simulation.discard(player, next(iter(simulation.hand_possibilities[player][best_discard])), best_discard)
+    simulation.make_expected_move(partner, hands[partner])
+    discard_score = simulation.max_score_adjusted(player)
     # print('best_discard', best_discard, discard_score)
 
     if best_clue != None and best_clue_score > discard_score:
@@ -266,7 +268,9 @@ class GlobalUnderstanding:
                     self.reveal_copy(next(iter(card)))
 
     def discard_copy(self, identity):
-        assert self.usable_copies[identity] > 0
+        if self.usable_copies[identity] == 0:
+            print('self.usable_copies[identity] == 0', self, identity)
+            return
         self.usable_copies[identity] -= 1
         if self.usable_copies[identity] == 0:
             self.last_copy_discarded(identity)
@@ -378,6 +382,8 @@ class GlobalUnderstanding:
             self.instructed_plays[receiver].append(referent)
 
     def make_expected_move(self, player, hand):
+        if self.turns_left == 0:
+            return
         identified_plays = self.get_identified_plays(self.hand_possibilities[player])
         if identified_plays:
             slot, identity = identified_plays[0]
@@ -429,8 +435,7 @@ class GlobalUnderstanding:
         return all([not self.useful(identity) for identity in card_possibilities])
 
     def useful(self, identity):
-        suit = identity[1]
-        rank = int(identity[0])
+        suit, rank = parse_identity(identity)
         return self.play_stacks[suit] < rank and rank <= self.max_stacks[suit]
 
     def score(self):
@@ -439,11 +444,20 @@ class GlobalUnderstanding:
     def max_score(self):
         return sum(self.max_stacks.values())
 
-    def max_score_adjusted(self):
+    def max_score_adjusted(self, current_player):
         pace = self.get_pace()
+        dead_final_round_turns = sum([0 if self.holds_final_round_card(player) else 1 for player in range(len(self.hand_possibilities)) if self.turns_left == None or self.turns_left == 1 and player == current_player or self.turns_left == 2])
+        pace -= dead_final_round_turns
         if pace < 0:
             return self.max_score() + pace
         return self.max_score()
+
+    def holds_final_round_card(self, player):
+        return any([all([self.is_final_round_card(identity) for identity in card_possibilities]) for card_possibilities in self.hand_possibilities[player]])
+
+    def is_final_round_card(self, identity):
+        suit, rank = parse_identity(identity)
+        return self.useful(identity) and rank >= self.max_stacks[suit] - 1
 
     def get_pace(self):
         draws_left = self.deck_size + (self.turns_left if self.turns_left != None else len(self.hand_possibilities))
