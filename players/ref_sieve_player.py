@@ -58,7 +58,10 @@ def find_best_move(hands, player, global_understanding):
     baseline_strikes = simulation.strikes
     baseline_bdrs = sum([global_understanding.usable_copies[identity] - copies for identity,
                          copies in simulation.usable_copies.items() if simulation.useful(identity)])
-    baseline_locked = simulation.instructed_to_lock[partner]
+    baseline_stalls = global_understanding.clue_tokens - \
+        simulation.clue_tokens if simulation.clue_tokens < global_understanding.clue_tokens else 0
+    baseline_tempo = simulation.score() + len(simulation.instructed_plays[partner]) + len(
+        simulation.get_good_touch_plays_for_player(partner))
 
     def evaluate_play(slot, good_touch_possibilities):
         if len(good_touch_possibilities) == 1:
@@ -66,53 +69,77 @@ def find_best_move(hands, player, global_understanding):
             simulation = deepcopy(global_understanding)
             simulated_hand = deepcopy(hands[partner])
             simulation.play(player, identity, slot)
+
+            clues_before_move = simulation.clue_tokens
             simulation.make_expected_move(partner, simulated_hand)
             score = simulation.max_score_adjusted(
                 player, player, simulated_hand)
-            locked = simulation.instructed_to_lock[partner]
+            stalls = clues_before_move - \
+                simulation.clue_tokens if simulation.clue_tokens < clues_before_move else 0
             bdrs = sum([global_understanding.usable_copies[identity] - copies for identity,
                         copies in simulation.usable_copies.items() if simulation.useful(identity)])
             print('simulated play', score, -
-                  simulation.strikes, not locked, -bdrs, slot)
-            return score, -simulation.strikes, not locked, -bdrs, -slot
+                  simulation.strikes, -stalls, -bdrs, slot)
+            return score, -simulation.strikes, -stalls, -bdrs, -slot
         else:
-            return baseline_max_score, -baseline_strikes, not baseline_locked, -baseline_bdrs, -slot
+            print('unknown play', good_touch_possibilities)
+            return baseline_max_score, -baseline_strikes, -baseline_stalls, -baseline_bdrs, -slot
 
     best_play_slot = None
     best_play_score = 0
     best_play_negated_strikes = -3
-    best_play_unlocked = False
+    best_play_negated_stalls = -100
     best_play_negated_bdrs = -100
 
     plays = [evaluate_play(slot, good_touch_possibilities)
              for slot, good_touch_possibilities in global_understanding.get_good_touch_plays_for_player(player)]
     if plays:
-        best_play_score, best_play_negated_strikes, best_play_unlocked, best_play_negated_bdrs, best_play_negated_slot = max(
+        best_play_score, best_play_negated_strikes, best_play_negated_stalls, best_play_negated_bdrs, best_play_negated_slot = max(
             plays)
         best_play_slot = -best_play_negated_slot
 
     if best_play_slot == None and global_understanding.instructed_plays[player]:
         best_play_slot = global_understanding.instructed_plays[player][0]
-        best_play_score = baseline_max_score
-        best_play_negated_strikes = -simulation.strikes
-        best_play_unlocked = not baseline_locked
-        best_play_negated_bdrs = -baseline_bdrs
+        asym_simulation = deepcopy(global_understanding)
+        for slot, card in enumerate(hands[partner]):
+            if len(asym_simulation.hand_possibilities[partner][slot]) != 1:
+                asym_simulation.reveal_copy(card["name"])
+        possibilities = [identity for identity in asym_simulation.hand_possibilities[player]
+                         [best_play_slot] if is_playable(identity, global_understanding.play_stacks)]
+        best_play_score, best_play_negated_strikes, best_play_negated_stalls, best_play_negated_bdrs, _ = evaluate_play(
+            best_play_slot, possibilities)
 
-    # print('best_play', best_play_slot, best_play_score,
-    #       best_play_negated_strikes, best_play_negated_bdrs, best_play_unlocked)
+    print('best_play', best_play_slot, best_play_score,
+          best_play_negated_strikes, best_play_negated_bdrs, best_play_negated_stalls)
 
     def evaluate_clue(clue_value, touching):
         simulation = deepcopy(global_understanding)
         simulated_hand = deepcopy(hands[partner])
+
+        previously_bad_touched = [slot for slot, touched in enumerate(simulation.touched[partner]) if touched and not simulation.useful(
+            hands[partner][slot]["name"]) and any([simulation.useful(identity) for identity in simulation.hand_possibilities[partner][slot]])]
+
         simulation.clue(partner, clue_value, touching)
+
+        still_bad_touched = [slot for slot in previously_bad_touched if not simulation.useful(
+            hands[partner][slot]["name"]) and any([simulation.useful(identity) for identity in simulation.hand_possibilities[partner][slot]])]
+
+        clue_tokens_before_playing = simulation.clue_tokens
+        score_before_playing = simulation.score()
         simulation.make_expected_move(partner, simulated_hand)
 
         score = simulation.max_score_adjusted(player, player, simulated_hand)
+
+        if clue_tokens_before_playing >= 1 and simulation.score() > score_before_playing and score < baseline_max_score and score <= best_play_score and not simulation.holds_final_round_card(partner):
+            score = baseline_max_score
+
         tempo = simulation.score() + len(simulation.instructed_plays[partner]) + len(
             simulation.get_good_touch_plays_for_player(partner))
+        fixes = len(previously_bad_touched) - len(still_bad_touched)
         bdrs = sum([global_understanding.usable_copies[identity] - copies for identity,
                     copies in simulation.usable_copies.items() if simulation.useful(identity)])
-        locked = simulation.instructed_to_lock[partner]
+        stalls = (clue_tokens_before_playing - simulation.clue_tokens if (simulation.clue_tokens < clue_tokens_before_playing) else 0) + \
+            1 if (tempo <= baseline_tempo and fixes == 0) else 0
         simulated_current_score = simulation.score()
         simulation.make_expected_move(partner, simulated_hand)
         while simulation.score() > simulated_current_score:
@@ -120,27 +147,33 @@ def find_best_move(hands, player, global_understanding):
             simulation.make_expected_move(partner, simulated_hand)
         strikes = simulation.strikes
         print('simulated clue', score, -simulation.strikes,
-              tempo, not locked, -bdrs, clue_value)
-        return score, -strikes, tempo, not locked, -bdrs, clue_value
+              tempo, fixes, -stalls, -bdrs, clue_value, 'baseline_tempo', baseline_tempo)
+        return score, -strikes, tempo, fixes, -stalls, -bdrs, clue_value
 
     best_clue = None
     best_clue_score = 0
     best_clue_negated_strikes = -3
     best_clue_tempo = 0
+    best_clue_fixes = 0
     best_clue_negated_bdrs = -100
-    best_clue_unlocked = False
+    best_clue_negated_stalls = -100
     if global_understanding.clue_tokens >= 1:
         clues = [evaluate_clue(clue_value, touching)
                  for clue_value, touching in get_possible_clues(hands[partner])]
         if clues:
-            best_clue_score, best_clue_negated_strikes, best_clue_tempo, best_clue_unlocked, best_clue_negated_bdrs, best_clue = max(
+            best_clue_score, best_clue_negated_strikes, best_clue_tempo, best_clue_fixes, best_clue_negated_stalls, best_clue_negated_bdrs, best_clue = max(
                 clues)
     print('best_clue', best_clue, best_clue_score, best_clue_negated_strikes,
-          best_clue_tempo, best_clue_negated_bdrs, best_clue_unlocked)
+          best_clue_tempo, best_clue_fixes, best_clue_negated_bdrs, best_clue_negated_stalls)
+
+    if global_understanding.turns_left != None and global_understanding.strikes < 2 and best_play_slot == None and best_clue_tempo == baseline_tempo and global_understanding.play_stacks != global_understanding.max_stacks:
+        print('last turn yolo')
+        return 'play', hands[player][0]
 
     best_discard = None
     discard_score = 0
     discard_strikes = 3
+    discard_stalls = 100
     if global_understanding.clue_tokens < 8:
         avoid_discarding = False
         if global_understanding.instructed_trash[player]:
@@ -171,26 +204,48 @@ def find_best_move(hands, player, global_understanding):
         discard_identity = min(trash_identities) if trash_identities else min(
             simulation.hand_possibilities[player][best_discard])
         simulation.discard(player, discard_identity, best_discard)
+
+        clue_tokens_before_move = simulation.clue_tokens
+
         simulation.make_expected_move(partner, simulated_hand)
         discard_score = 0 if avoid_discarding else simulation.max_score_adjusted(
             player, player, simulated_hand)
         discard_strikes = simulation.strikes
-    print('best_discard', best_discard, discard_score)
+        discard_stalls = clue_tokens_before_move - \
+            simulation.clue_tokens if simulation.clue_tokens < clue_tokens_before_move else 0
+    print('best_discard', best_discard, discard_score,
+          discard_strikes, discard_stalls, -baseline_bdrs)
 
-    maximum = max(
+    print('max args', (
         (best_play_score,
          best_play_negated_strikes,
-         best_play_unlocked,
+         best_play_negated_stalls,
          global_understanding.clue_tokens >= 4 and best_play_negated_bdrs,
          'play'),
         (best_clue_score,
          best_clue_negated_strikes,
-         best_clue_unlocked,
+         best_clue_negated_stalls,
          global_understanding.clue_tokens >= 4 and best_clue_negated_bdrs,
          'clue'),
         (discard_score,
          -discard_strikes,
-         not baseline_locked,
+         -discard_stalls,
+         global_understanding.clue_tokens >= 4 and -baseline_bdrs,
+         'discard')))
+    maximum = max(
+        (best_play_score,
+         best_play_negated_strikes,
+         best_play_negated_stalls,
+         global_understanding.clue_tokens >= 4 and best_play_negated_bdrs,
+         'play'),
+        (best_clue_score,
+         best_clue_negated_strikes,
+         best_clue_negated_stalls,
+         global_understanding.clue_tokens >= 4 and best_clue_negated_bdrs,
+         'clue'),
+        (discard_score,
+         -discard_strikes,
+         -discard_stalls,
          global_understanding.clue_tokens >= 4 and -baseline_bdrs,
          'discard'))
     # print('maximum', maximum)
@@ -455,25 +510,29 @@ class GlobalUnderstanding:
             identity for identity in self.unseen_copies.keys() if not self.useful(identity)]
         placeholder_card = {
             "name": unseen_trashes[0] if unseen_trashes else '1r'}
+
+        play_slot = None
+
         good_touch_plays = self.get_good_touch_plays_for_player(player)
         if good_touch_plays:
             slot, good_touch_identities = good_touch_plays[0]
-            identity = hand.pop(slot)["name"]
+            play_slot = slot
+        elif self.instructed_plays[player]:
+            play_slot = self.instructed_plays[player][0]
+        if play_slot != None:
+            identity = hand.pop(play_slot)["name"]
             if self.deck_size >= 1:
                 hand.insert(0, placeholder_card)
-            self.play(player, identity, slot)
-            return
-        if self.instructed_plays[player]:
-            slot = self.instructed_plays[player][0]
-            identity = hand.pop(slot)["name"]
-            if self.deck_size >= 1:
-                hand.insert(0, placeholder_card)
-            self.play(player, identity, slot)
+            self.play(player, identity, play_slot)
             return
         if self.clue_tokens == 8:
+            if self.turns_left != None:
+                self.turns_left -= 1
             self.clue_tokens -= 1
             return
-        if self.clue_tokens >= 1 and self.get_pace_adjusted(player, (player + 1) % 2, hand) <= 0:
+        if self.clue_tokens >= 1 and self.get_pace_adjusted(player, (player + 1) % 2, hand) <= 0 and (self.instructed_plays[(player + 1) % 2] or self.get_good_touch_plays_for_player((player + 1) % 2)):
+            if self.turns_left != None:
+                self.turns_left -= 1
             self.clue_tokens -= 1
             return
         if self.instructed_trash[player]:
@@ -499,6 +558,8 @@ class GlobalUnderstanding:
             return
         if self.instructed_to_lock[player] and self.clue_tokens > 0:
             # print('instructed to lock')
+            if self.turns_left != None:
+                self.turns_left -= 1
             self.clue_tokens -= 1
             return
         unclued = get_unclued(self.hand_possibilities[player])
@@ -593,9 +654,9 @@ class GlobalUnderstanding:
             [self.is_final_round_card(card["name"]) for card in partner_hand])
         if self.turns_left == 1:
             if player == current_player:
-                partner_holds_final_round_card = False
+                partner_holds_final_round_card = True
             else:
-                i_hold_final_round_card = False
+                i_hold_final_round_card = True
         dead_final_round_turns = sum([
             0 if holds_final_round_card else 1
             for holds_final_round_card in (i_hold_final_round_card, partner_holds_final_round_card)])
