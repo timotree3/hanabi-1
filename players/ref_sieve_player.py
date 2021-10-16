@@ -35,7 +35,7 @@ class ReferentialSievePlayer(AIPlayer):
                 self.global_understanding.clue(receiver, value, touching)
 
         best_move = find_best_move(r.HandHistory[-1], r.whoseTurn, self.global_understanding)
-        print('best_move', best_move, [card["name"] for card in r.HandHistory[-1][1]])
+        # print('best_move', best_move, [card["name"] for card in r.HandHistory[-1][1]])
         return best_move
 
 
@@ -77,7 +77,7 @@ def find_best_move(hands, player, global_understanding):
         best_play_bdrs = bdrs
     
     if best_play_slot == None and global_understanding.instructed_plays[player]:
-        print('including instructed play')
+        # print('including instructed play')
         best_play_slot = global_understanding.instructed_plays[player][0]
         best_play_score = baseline_max_score
         best_play_locked = baseline_locked
@@ -132,7 +132,7 @@ def find_best_move(hands, player, global_understanding):
 
     if best_play_slot != None:
         if best_clue_score >= best_play_score and best_play_locked and not best_clue_locked:
-            print('best_play_locked', best_play_locked)
+            # print('best_play_locked', best_play_locked)
             return 'hint', (partner, best_clue)
     else:
         if best_clue_score >= baseline_max_score and baseline_locked and not best_clue_locked:
@@ -176,7 +176,10 @@ def find_best_move(hands, player, global_understanding):
     simulation.discard(player, discard_identity, best_discard)
     simulation.make_expected_move(partner, hands[partner])
     discard_score = simulation.max_score_adjusted(player)
-    print('best_discard', best_discard, discard_score)
+    # print('best_discard', best_discard, discard_score)
+    
+    if best_play_slot != None and best_play_score >= best_clue_score and best_play_score >= discard_score:
+        return 'play', hands[player][best_play_slot]
 
     if best_clue != None and best_clue_score > discard_score:
         return 'hint', (partner, best_clue)
@@ -253,7 +256,7 @@ class GlobalUnderstanding:
 
     def reveal_copy(self, identity):
         if self.unseen_copies[identity] == 0:
-            print('self.unseen_copies[identity] == 0', self, identity)
+            # print('self.unseen_copies[identity] == 0', self, identity)
             return
         self.unseen_copies[identity] -= 1
         if self.unseen_copies[identity] == 0:
@@ -274,7 +277,7 @@ class GlobalUnderstanding:
 
     def discard_copy(self, identity):
         if self.usable_copies[identity] == 0:
-            print('self.usable_copies[identity] == 0', self, identity)
+            # print('self.usable_copies[identity] == 0', self, identity)
             return
         self.usable_copies[identity] -= 1
         if self.usable_copies[identity] == 0:
@@ -317,7 +320,7 @@ class GlobalUnderstanding:
         self.instructed_to_lock[player] = False
 
     def discard(self, player, identity, slot):
-        print('discard', player, identity, slot)
+        # print('discard', player, identity, slot)
         self.interpret_discard(player, identity, slot)
 
         self.draw(player, replacing = slot)
@@ -420,7 +423,7 @@ class GlobalUnderstanding:
             self.discard(player, identity, self.instructed_chop[player])
             return
         if self.instructed_to_lock[player] and self.clue_tokens > 0:
-            print('instructed to lock')
+            # print('instructed to lock')
             self.clue_tokens -= 1
             return
         unclued = get_unclued(self.hand_possibilities[player])
