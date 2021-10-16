@@ -367,9 +367,10 @@ class GlobalUnderstanding:
         receiver_identified_plays = self.get_identified_plays(self.hand_possibilities[receiver])
         receiver_known_trashes = self.get_known_trashes(self.hand_possibilities[receiver])
 
-        new_receiver_identified_plays = [play for play in receiver_identified_plays if play not in old_receiver_identified_plays]
-        new_receiver_known_trashes = [slot for slot in receiver_known_trashes if slot not in old_receiver_known_trashes]
+        new_receiver_identified_plays = [play for play in receiver_identified_plays if play not in old_receiver_identified_plays and play not in old_receiver_unclued]
+        new_receiver_known_trashes = [slot for slot in receiver_known_trashes if slot not in old_receiver_known_trashes and slot not in old_receiver_unclued]
         if new_receiver_identified_plays or new_receiver_known_trashes:
+            print('new_receiver_known_trashes', new_receiver_known_trashes)
             return
 
         referent = get_referent(old_receiver_unclued, touching)
