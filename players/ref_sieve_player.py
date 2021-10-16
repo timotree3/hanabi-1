@@ -462,7 +462,7 @@ class GlobalUnderstanding:
             play
             for play, card_possibilities in receiver_identified_plays
             if play not in old_receiver_identified_plays
-            and play not in old_receiver_unclued]
+            and (value in SUIT_CONTENTS or play not in old_receiver_unclued)]
         new_receiver_known_trashes = [
             slot
             for slot in receiver_known_trashes
@@ -482,7 +482,7 @@ class GlobalUnderstanding:
         # print('all_trash', all_trash)
 
         if value in SUIT_CONTENTS and not all_trash:
-            if receiver_was_loaded and not self.instructed_to_lock[(receiver + 1) % 2]:
+            if receiver_was_loaded:
                 if old_receiver_unclued[0] in touching:
                     self.instructed_trash[receiver].append(referent)
                 else:
