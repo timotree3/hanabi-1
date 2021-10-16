@@ -100,7 +100,10 @@ def find_best_move(hands, player, global_understanding):
             tempo = simulation.score() + len(simulation.instructed_plays[partner]) + len(simulation.get_identified_plays(simulation.hand_possibilities[partner]))
             bdrs = sum([global_understanding.usable_copies[identity] - copies for identity, copies in simulation.usable_copies.items() if simulation.useful(identity)])
             locked = simulation.instructed_to_lock[partner]
-            while simulation.turns_left != 0 and simulation.instructed_plays[partner] or simulation.get_identified_plays(simulation.hand_possibilities[partner]):
+            simulated_current_score = simulation.score()
+            simulation.make_expected_move(partner, hands[partner])
+            while simulation.score() > simulated_current_score:
+                simulated_current_score = simulation.score()
                 simulation.make_expected_move(partner, hands[partner])
             strikes = simulation.strikes
             print('simulated', clue_value, score, strikes, tempo, bdrs, locked)
