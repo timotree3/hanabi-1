@@ -62,9 +62,9 @@ def find_best_move(hands, player, global_understanding):
             locked = simulation.instructed_to_lock[partner]
             bdrs = sum([global_understanding.usable_copies[identity] - copies for identity, copies in simulation.usable_copies.items() if simulation.useful(identity)])
             # print('simulated play', score, -simulation.strikes, not locked, -bdrs, slot)
-            return score, -simulation.strikes, not locked, -bdrs, slot
+            return score, -simulation.strikes, not locked, -bdrs, -slot
         else:
-            return baseline_max_score, -baseline_strikes, not baseline_locked, -baseline_bdrs, slot
+            return baseline_max_score, -baseline_strikes, not baseline_locked, -baseline_bdrs, -slot
 
 
     best_play_slot = None
@@ -75,7 +75,8 @@ def find_best_move(hands, player, global_understanding):
 
     plays = [evaluate_play(deepcopy(global_understanding), slot, good_touch_possibilities) for slot, good_touch_possibilities in global_understanding.get_good_touch_plays_for_player(player)]
     if plays:
-        best_play_score, best_play_negated_strikes, best_play_unlocked, best_play_negated_bdrs, best_play_slot = max(plays)
+        best_play_score, best_play_negated_strikes, best_play_unlocked, best_play_negated_bdrs, best_play_negated_slot = max(plays)
+        best_play_slot = -best_play_negated_slot
     
     if best_play_slot == None and global_understanding.instructed_plays[player]:
         best_play_slot = global_understanding.instructed_plays[player][0]
@@ -100,7 +101,7 @@ def find_best_move(hands, player, global_understanding):
             simulated_current_score = simulation.score()
             simulation.make_expected_move(partner, hands[partner])
         strikes = simulation.strikes
-        print('simulated clue', score, -simulation.strikes, tempo, not locked, -bdrs, clue_value)
+        # print('simulated clue', score, -simulation.strikes, tempo, not locked, -bdrs, clue_value)
         return score, -strikes, tempo, not locked, -bdrs, clue_value
 
 
@@ -114,60 +115,41 @@ def find_best_move(hands, player, global_understanding):
         clues = [evaluate_clue(deepcopy(global_understanding), clue_value, touching) for clue_value, touching in get_possible_clues(hands[partner])]
         if clues:
             best_clue_score, best_clue_negated_strikes, best_clue_tempo, best_clue_unlocked, best_clue_negated_bdrs, best_clue = max(clues)
-    print('best_clue', best_clue, best_clue_score, best_clue_negated_strikes, best_clue_tempo, best_clue_negated_bdrs, best_clue_unlocked)
-
-
-    if best_play_slot != None:
-        if best_clue_score >= best_play_score and best_clue_unlocked > best_play_unlocked:
-            return 'hint', (partner, best_clue)
-    else:
-        if best_clue_score >= baseline_max_score and best_clue_unlocked > (not baseline_locked):
-            return 'hint', (partner, best_clue)
-
-
-    if best_play_score == current_max_score:
-        return 'play', hands[player][best_play_slot]
-
-    if global_understanding.clue_tokens == 8:
-        if best_clue_score > best_play_score:
-            return 'hint', (partner, best_clue)
-        else:
-            return 'play', hands[player][best_play_slot]
-        
-    if global_understanding.clue_tokens >= 4 and (best_clue_score > baseline_max_score or (best_clue_score == baseline_max_score and -best_clue_negated_bdrs < baseline_bdrs)):
-        return 'hint', (partner, best_clue)
+    # print('best_clue', best_clue, best_clue_score, best_clue_negated_strikes, best_clue_tempo, best_clue_negated_bdrs, best_clue_unlocked)
 
     best_discard = None
-
-    if global_understanding.instructed_trash[player]:
-        best_discard = global_understanding.instructed_trash[player][0]
-    else:
-        known_trashes = global_understanding.get_known_trashes(global_understanding.hand_possibilities[player])
-        if known_trashes:
-            best_discard = known_trashes[0]
-        elif global_understanding.instructed_chop[player] != None:
-            best_discard = global_understanding.instructed_chop[player]
+    discard_score = 0
+    discard_strikes = 3
+    if global_understanding.clue_tokens < 8:
+        if global_understanding.instructed_trash[player]:
+            best_discard = global_understanding.instructed_trash[player][0]
         else:
-            if global_understanding.instructed_to_lock[player] or best_play_slot != None:
-                discard_score = 0
-            unclued = get_unclued(global_understanding.hand_possibilities[player])
-            if unclued:
-                best_discard = unclued[0]
+            known_trashes = global_understanding.get_known_trashes(global_understanding.hand_possibilities[player])
+            if known_trashes:
+                best_discard = known_trashes[0]
+            elif global_understanding.instructed_chop[player] != None:
+                best_discard = global_understanding.instructed_chop[player]
             else:
-                best_discard = 0
+                if global_understanding.instructed_to_lock[player] or best_play_slot != None:
+                    discard_score = 0
+                unclued = get_unclued(global_understanding.hand_possibilities[player])
+                if unclued:
+                    best_discard = unclued[0]
+                else:
+                    best_discard = 0
 
-    simulation = deepcopy(global_understanding)
-    trash_identities = [identity for identity in simulation.hand_possibilities[player][best_discard] if not simulation.useful(identity)]
-    discard_identity = min(trash_identities) if trash_identities else min(simulation.hand_possibilities[player][best_discard])
-    simulation.discard(player, discard_identity, best_discard)
-    simulation.make_expected_move(partner, hands[partner])
-    discard_score = simulation.max_score_adjusted(player)
-    discard_strikes = simulation.strikes
+        simulation = deepcopy(global_understanding)
+        trash_identities = [identity for identity in simulation.hand_possibilities[player][best_discard] if not simulation.useful(identity)]
+        discard_identity = min(trash_identities) if trash_identities else min(simulation.hand_possibilities[player][best_discard])
+        simulation.discard(player, discard_identity, best_discard)
+        simulation.make_expected_move(partner, hands[partner])
+        discard_score = simulation.max_score_adjusted(player)
+        discard_strikes = simulation.strikes
     # print('best_discard', best_discard, discard_score)
 
-    maximum = max((best_play_score, best_play_negated_strikes, 'play'), (discard_score, -discard_strikes, 'discard'), (best_clue_score, best_clue_negated_strikes, 'clue'))
+    maximum = max((best_play_score, best_play_negated_strikes, best_play_unlocked, global_understanding.clue_tokens >= 4 and best_play_negated_bdrs, 'play'), (best_clue_score, best_clue_negated_strikes, best_clue_unlocked, global_understanding.clue_tokens >= 4 and best_clue_negated_bdrs, 'clue'), (discard_score, -discard_strikes, not baseline_locked, global_understanding.clue_tokens >= 4 and -baseline_bdrs, 'discard'))
     # print('maximum', maximum)
-    _, _, move = maximum
+    _, _, _, _, move = maximum
     if move == 'play':
         return 'play', hands[player][best_play_slot]
     if move == 'discard':
@@ -281,7 +263,7 @@ class GlobalUnderstanding:
         self.max_stacks[suit] = min(rank - 1, self.max_stacks[suit])
 
     def play(self, player, identity, slot):
-        print('play', player, identity, slot)
+        # print('play', player, identity, slot)
         suit, rank = parse_identity(identity)
 
         if self.play_stacks[suit] == rank - 1:
@@ -311,7 +293,7 @@ class GlobalUnderstanding:
         self.instructed_to_lock[player] = False
 
     def discard(self, player, identity, slot):
-        print('discard', player, identity, slot)
+        # print('discard', player, identity, slot)
         self.interpret_discard(player, identity, slot)
 
         self.draw(player, replacing = slot)
@@ -370,7 +352,7 @@ class GlobalUnderstanding:
             return
 
         all_trash = all([slot in receiver_known_trashes for slot in touching if slot in old_receiver_unclued])
-        print('all_trash', all_trash)
+        # print('all_trash', all_trash)
 
         if value in SUIT_CONTENTS and not all_trash:
             if receiver_was_loaded:
