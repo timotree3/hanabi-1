@@ -100,7 +100,7 @@ def find_best_move(hands, player, global_understanding):
             tempo = simulation.score() + len(simulation.instructed_plays[partner]) + len(simulation.get_identified_plays(simulation.hand_possibilities[partner]))
             bdrs = sum([global_understanding.usable_copies[identity] - copies for identity, copies in simulation.usable_copies.items() if simulation.useful(identity)])
             locked = simulation.instructed_to_lock[partner]
-            while simulation.instructed_plays[partner] or simulation.get_identified_plays(simulation.hand_possibilities[partner]):
+            while simulation.turns_left != 0 and simulation.instructed_plays[partner] or simulation.get_identified_plays(simulation.hand_possibilities[partner]):
                 simulation.make_expected_move(partner, hands[partner])
             strikes = simulation.strikes
             print('simulated', clue_value, score, strikes, tempo, bdrs, locked)
@@ -168,10 +168,12 @@ def find_best_move(hands, player, global_understanding):
                 best_discard = 0
 
     simulation = deepcopy(global_understanding)
-    simulation.discard(player, next(iter(simulation.hand_possibilities[player][best_discard])), best_discard)
+    trash_identities = [identity for identity in simulation.hand_possibilities[player][best_discard] if not simulation.useful(identity)]
+    discard_identity = min(trash_identities) if trash_identities else min(simulation.hand_possibilities[player][best_discard])
+    simulation.discard(player, discard_identity, best_discard)
     simulation.make_expected_move(partner, hands[partner])
     discard_score = simulation.max_score_adjusted(player)
-    # print('best_discard', best_discard, discard_score)
+    print('best_discard', best_discard, discard_score)
 
     if best_clue != None and best_clue_score > discard_score:
         return 'hint', (partner, best_clue)
@@ -276,6 +278,8 @@ class GlobalUnderstanding:
             self.last_copy_discarded(identity)
 
     def last_copy_discarded(self, identity):
+        if not self.useful(identity):
+            return
         suit, rank = parse_identity(identity)
         self.max_stacks[suit] = min(rank - 1, self.max_stacks[suit])
 
