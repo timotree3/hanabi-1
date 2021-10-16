@@ -169,9 +169,9 @@ def find_best_move(hands, player, global_understanding):
                 best_discard = unclued[0]
             else:
                 best_discard = 0
-    print('best_discard', best_discard, discard_score)
+    # print('best_discard', best_discard, discard_score)
 
-    if best_clue_score > discard_score:
+    if best_clue != None and best_clue_score > discard_score:
         return 'hint', (partner, best_clue)
 
     if best_play_slot != None and best_play_score >= discard_score:
@@ -276,12 +276,12 @@ class GlobalUnderstanding:
         self.max_stacks[suit] = min(rank - 1, self.max_stacks[suit])
 
     def play(self, player, identity, slot):
-        print('play', player, identity, slot)
+        # print('play', player, identity, slot)
         suit, rank = parse_identity(identity)
 
         if self.play_stacks[suit] == rank - 1:
             self.play_stacks[suit] = rank
-            if rank == 5:
+            if rank == 5 and self.clue_tokens != 8:
                 self.clue_tokens += 1
         else:
             self.strikes += 1
