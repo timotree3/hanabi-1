@@ -85,7 +85,7 @@ def find_best_move(hands, player, global_understanding):
         best_play_unlocked = not baseline_locked
         best_play_negated_bdrs = -baseline_bdrs
 
-    # print('best_play', best_play_slot, best_play_score, best_play_negated_strikes, best_play_negated_bdrs, best_play_unlocked)
+    print('best_play', best_play_slot, best_play_score, best_play_negated_strikes, best_play_negated_bdrs, best_play_unlocked)
 
     def evaluate_clue(simulation, clue_value, touching):
         simulation.clue(partner, clue_value, touching)
@@ -101,7 +101,7 @@ def find_best_move(hands, player, global_understanding):
             simulated_current_score = simulation.score()
             simulation.make_expected_move(partner, hands[partner])
         strikes = simulation.strikes
-        # print('simulated clue', score, -simulation.strikes, tempo, not locked, -bdrs, clue_value)
+        print('simulated clue', score, -simulation.strikes, tempo, not locked, -bdrs, clue_value)
         return score, -strikes, tempo, not locked, -bdrs, clue_value
 
 
@@ -115,12 +115,13 @@ def find_best_move(hands, player, global_understanding):
         clues = [evaluate_clue(deepcopy(global_understanding), clue_value, touching) for clue_value, touching in get_possible_clues(hands[partner])]
         if clues:
             best_clue_score, best_clue_negated_strikes, best_clue_tempo, best_clue_unlocked, best_clue_negated_bdrs, best_clue = max(clues)
-    # print('best_clue', best_clue, best_clue_score, best_clue_negated_strikes, best_clue_tempo, best_clue_negated_bdrs, best_clue_unlocked)
+    print('best_clue', best_clue, best_clue_score, best_clue_negated_strikes, best_clue_tempo, best_clue_negated_bdrs, best_clue_unlocked)
 
     best_discard = None
     discard_score = 0
     discard_strikes = 3
     if global_understanding.clue_tokens < 8:
+        avoid_discarding = False
         if global_understanding.instructed_trash[player]:
             best_discard = global_understanding.instructed_trash[player][0]
         else:
@@ -131,7 +132,7 @@ def find_best_move(hands, player, global_understanding):
                 best_discard = global_understanding.instructed_chop[player]
             else:
                 if global_understanding.instructed_to_lock[player] or best_play_slot != None:
-                    discard_score = 0
+                    avoid_discarding = True
                 unclued = get_unclued(global_understanding.hand_possibilities[player])
                 if unclued:
                     best_discard = unclued[0]
@@ -143,9 +144,9 @@ def find_best_move(hands, player, global_understanding):
         discard_identity = min(trash_identities) if trash_identities else min(simulation.hand_possibilities[player][best_discard])
         simulation.discard(player, discard_identity, best_discard)
         simulation.make_expected_move(partner, hands[partner])
-        discard_score = simulation.max_score_adjusted(player)
+        discard_score = 0 if avoid_discarding else simulation.max_score_adjusted(player)
         discard_strikes = simulation.strikes
-    # print('best_discard', best_discard, discard_score)
+    print('best_discard', best_discard, discard_score)
 
     maximum = max((best_play_score, best_play_negated_strikes, best_play_unlocked, global_understanding.clue_tokens >= 4 and best_play_negated_bdrs, 'play'), (best_clue_score, best_clue_negated_strikes, best_clue_unlocked, global_understanding.clue_tokens >= 4 and best_clue_negated_bdrs, 'clue'), (discard_score, -discard_strikes, not baseline_locked, global_understanding.clue_tokens >= 4 and -baseline_bdrs, 'discard'))
     # print('maximum', maximum)
