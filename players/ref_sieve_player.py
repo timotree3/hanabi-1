@@ -469,6 +469,8 @@ class GlobalUnderstanding:
             if slot not in old_receiver_known_trashes
             and slot not in old_receiver_unclued]
         if new_receiver_identified_plays or new_receiver_known_trashes:
+            # print('new_plays', new_receiver_identified_plays,
+            #       'new_trash', new_receiver_known_trashes)
             return
 
         referent = get_referent(old_receiver_unclued, touching)
@@ -480,7 +482,7 @@ class GlobalUnderstanding:
         # print('all_trash', all_trash)
 
         if value in SUIT_CONTENTS and not all_trash:
-            if receiver_was_loaded:
+            if receiver_was_loaded and not self.instructed_to_lock[(receiver + 1) % 2]:
                 if old_receiver_unclued[0] in touching:
                     self.instructed_trash[receiver].append(referent)
                 else:
